@@ -1,3 +1,20 @@
+# Copyright (C) 2013-2015 Martin Drees
+#
+# This file is part of darch.
+#
+# darch is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# darch is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with darch. If not, see <http://www.gnu.org/licenses/>.
+
 #' Resets the output list of the \code{\link{DArch}} object
 #' 
 #' This function sets the attribute \code{executeOutput} of the 
@@ -16,6 +33,7 @@ setGeneric("resetExecOutput",function(darch){standardGeneric("resetExecOutput")}
 
 #' @rdname resetExecOutput-methods
 #' @aliases resetExecOutput,DArch-method
+#' @export
 setMethod(
   f="resetExecOutput",
   signature="DArch",
@@ -57,7 +75,7 @@ setMethod(
     rbmList <- getRBMList(darch)
     layers <- getLayers(darch)
     rbmListLength <- length(rbmList)
-    if(resetRBMs){
+    if (resetRBMs){
       for(i in 1:rbmListLength){
         rbmList[[i]] <- resetRBM(rbmList[[i]])
       }
@@ -70,7 +88,7 @@ setMethod(
       darch <- addLayer(darch,getWeights(rbm),getHiddenBiases(rbm),sigmoidUnit)  			
     }
     
-    if(rbmListLength < (length(layers))){
+    if (rbmListLength < (length(layers))){
       for(i in (rbmListLength+1):(length(layers))){
         rows <- nrow(layers[[i]][[1]])-1
         cols <- ncol(layers[[i]][[1]])

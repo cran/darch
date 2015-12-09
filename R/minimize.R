@@ -1,3 +1,20 @@
+# Copyright (C) 2013-2015 Martin Drees
+#
+# This file is part of darch.
+#
+# darch is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# darch is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with darch. If not, see <http://www.gnu.org/licenses/>.
+
 #' Minimize a differentiable multivariate function. 
 #' 
 #' This function is a direct translation from the Matlab source code of the 
@@ -21,7 +38,7 @@
 #' can be made (ie, we are at a (local) minimum, or so close that due to
 #' numerical problems, we cannot get any closer). NOTE: If the function
 #' terminates within a few iterations, it could be an indication that the
-#' function values and derivatives are not consistent (ie, there may be a bug in
+#' function values and derivatives are not consistent (i.e., there may be a bug in
 #' the implementation of your "f" function). The function returns the found
 #' solution "X", a vector of function values "fX" indicating the progress made
 #' and "i" the number of iterations (line searches or function evaluations,
@@ -58,7 +75,7 @@
 #' @rdname minimize
 #' @export
 minimize <-function( X, f, length, ...) {
-  
+  matMult <- get("matMult", darch.env)
   # Minimize a differentiable multivariate function. 
   #
   # Usage: [X, fX, i] <- minimize(X, f, length, P1, P2, P3, ... )
@@ -138,12 +155,12 @@ minimize <-function( X, f, length, ...) {
   i <- 0                                            # zero the run length counter
   ls.failed <- 0                             # no previous line search has failed
   ret <- f( X, ...)          # get function value and gradient
-  f0 <- ret[1]
+  f0 <- if(!is.nan(ret[1])) ret[1] else Inf
   df0 <- ret[2:length(ret)]
   fX <- f0
   i <- i + (length<0)                                            # count epochs?!
   s <- -df0
-  d0 <- t(-s)%*%s           # initial search direction (steepest) and slope
+  d0 <- matMult(t(-s), s)     # initial search direction (steepest) and slope
   x3 <- red/(1-d0)                                  # initial step is red/(|s|+1)
   
   while(i < abs(length)){                                      # while not finished
@@ -153,7 +170,7 @@ minimize <-function( X, f, length, ...) {
     F0 <- f0 
     dF0 <- df0 # make a copy of current values
     
-    if(length>0){
+    if (length>0){
       M <- MAX
     }else{
       M <- min(MAX, -length-i) 
@@ -171,25 +188,25 @@ minimize <-function( X, f, length, ...) {
         M <- M - 1 
         i <- i + (length<0)                         # count epochs?!
         ret <- f(X+x3*s, ...)
-        f3 <- ret[1]
+        f3 <- if(!is.nan(ret[1])) ret[1] else Inf
         df3 <- ret[2:length(ret)]
         
-        if(is.nan(f3) ||  is.infinite(f3) || any(is.nan(df3)+is.infinite(df3))){
+        if (is.infinite(f3) || any(is.nan(df3)+is.infinite(df3))){
           x3 <- (x2+x3)/2                                  # bisect and try again
         }else{
           success <- 1
         }                              
       }
       
-      if(f3 < F0){
+      if (f3 < F0){
         X0 <- X+x3*s 
         F0 <- f3 
         dF0 <- df3    # keep best values
       }        
       
-      d3 <- t(df3)%*%s                     # new slope
+      d3 <- matMult(t(df3), s)                     # new slope
       
-      if(d3 > SIG*d0 || f3 > f0+x3*RHO*d0 || M == 0){  # are we done extrapolating?
+      if (d3 > SIG*d0 || f3 > f0+x3*RHO*d0 || M == 0){  # are we done extrapolating?
         break
       }
       
@@ -204,9 +221,9 @@ minimize <-function( X, f, length, ...) {
       
       A <- 6*(f1-f2)+3*(d2+d1)*(x2-x1)                 # make cubic extrapolation
       B <- 3*(f2-f1)-(2*d1+d2)*(x2-x1)
-      
-      x3 <- x1-d1*(x2-x1)^2/(B+sqrt(B*B-A*d1*(x2-x1))) # num. error possible, ok!
-      if(!is.double(x3) || is.nan(x3) || is.infinite(x3) || x3 < 0){ # num prob | wrong sign?
+      # num. error possible, ok!
+      suppressWarnings(x3 <- x1-d1*(x2-x1)^2/(B+sqrt(B*B-A*d1*(x2-x1))))
+      if (!is.double(x3) || is.nan(x3) || is.infinite(x3) || x3 < 0){ # num prob | wrong sign?
         x3 <- x2*EXT                                 # extrapolate maximum amount
       }else if(x3 > (x2*EXT)){                  # new point beyond extrapolation limit?
         x3 <- x2*EXT                                 # extrapolate maximum amount
@@ -216,7 +233,7 @@ minimize <-function( X, f, length, ...) {
     }                                                        # end extrapolation
     
     while((abs(d3) > -SIG*d0 || f3 > f0+x3*RHO*d0) && M > 0){  # keep interpolating
-      if(d3 > 0 || f3 > f0+x3*RHO*d0){                         # choose subinterval
+      if (d3 > 0 || f3 > f0+x3*RHO*d0){                         # choose subinterval
         # move point 3 to point 4
         x4 <- x3 
         f4 <- f3 
@@ -228,15 +245,16 @@ minimize <-function( X, f, length, ...) {
         d2 <- d3                     
       }
       
-      if(f4 > f0){           
+      if (f4 > f0){           
         x3 <- x2-(0.5*d2*(x4-x2)^2)/(f4-f2-d2*(x4-x2))  # quadratic interpolation
       }else{
         A <- 6*(f2-f4)/(x4-x2)+3*(d4+d2)                    # cubic interpolation
         B <- 3*(f4-f2)-(2*d2+d4)*(x4-x2)
-        x3 <- x2+(sqrt(B*B-A*d2*(x4-x2)^2)-B)/A        # num. error possible, ok!
+        # num. error possible, ok!
+        suppressWarnings(x3 <- x2+(sqrt(B*B-A*d2*(x4-x2)^2)-B)/A)
       }
       
-      if(is.nan(x3) || is.infinite(x3)){
+      if (is.nan(x3) || is.infinite(x3)){
         x3 <- (x2+x4)/2               # if we had a numerical problem then bisect
       }
       
@@ -244,8 +262,8 @@ minimize <-function( X, f, length, ...) {
       ret <- f(X+x3*s, ...)
       f3 <- ret[1]
       df3 <- ret[2:length(ret)]
-      
-      if(f3 < F0){
+
+      if (f3 < F0){
         # keep best values
         X0 <- X+x3*s 
         F0 <- f3 
@@ -254,22 +272,22 @@ minimize <-function( X, f, length, ...) {
       
       M <- M - 1 
       i <- i + (length<0)                             # count epochs?!
-      d3 <- t(df3)%*%s                                                    # new slope
+      d3 <- matMult(t(df3), s)                         # new slope
     }                                                        # end interpolation
-    
-    if(abs(d3) < -SIG*d0 && f3 < f0+x3*RHO*d0){          # if line search succeeded
+
+    if (abs(d3) < -SIG*d0 && f3 < f0+x3*RHO*d0){          # if line search succeeded
       X <- X+x3*s 
       f0 <- f3 
       fX <- c(fX,f0)                     # update variables
-      print(paste(S, i, "Value",f0))
-      s <- (t(df3)%*%df3-t(df0)%*%df3)/(t(df0)%*%df0)*s - df3   # Polack-Ribiere CG direction
+      #print(paste(S, i, "Value",f0))
+      s <- (matMult(t(df3), df3)-matMult(t(df0), df3))/(matMult(t(df0), df0))*s - df3   # Polack-Ribiere CG direction
       df0 <- df3                                               # swap derivatives
       d3 <- d0 
-      d0 <- t(df0)%*%s
+      d0 <- matMult(t(df0), s)
       
-      if(d0 > 0){                                      # new slope must be negative
+      if (d0 > 0){                                      # new slope must be negative
         s <- -df0 
-        d0 <- -t(s)%*%s                  # otherwise use steepest direction
+        d0 <- matMult(-t(s), s)              # otherwise use steepest direction
       }
       
       x3 <- x3 * min(RATIO, d3/(d0-.Machine[["double.xmin"]]))          # slope ratio but max RATIO
@@ -280,11 +298,11 @@ minimize <-function( X, f, length, ...) {
       f0 <- F0 
       df0 <- dF0 
       
-      if(ls.failed || i > abs(length)){         # line search failed twice in a row
+      if (ls.failed || i > abs(length)){         # line search failed twice in a row
         break                             # or we ran out of time, so we give up
       } 
       s <- -df0 
-      d0 <- -t(s)%*%s                                        # try steepest
+      d0 <- matMult(-t(s), s)                            # try steepest
       x3 <- 1/(1-d0)                     
       ls.failed <- 1                                    # this line search failed
     } #

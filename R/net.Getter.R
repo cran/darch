@@ -1,3 +1,20 @@
+# Copyright (C) 2013-2015 Martin Drees
+#
+# This file is part of darch.
+#
+# darch is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# darch is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with darch. If not, see <http://www.gnu.org/licenses/>.
+
 #' Returns the batch size of the \code{\link{Net}}.
 #'
 #' @param net A instance of the class \code{\link{Net}}.
@@ -125,7 +142,29 @@ setMethod(
   }
 )
 
-#' Returns the momentum of the \code{\link{Net}}.
+#' Returns the momentum of the \code{\link{Net}}
+#'
+#' @param net A instance of the class \code{\link{Net}}.
+#'
+#' @seealso \code{\link{Net}}
+#' 
+#' @export
+setGeneric("getInitialMomentum",function(net){standardGeneric("getInitialMomentum")})
+
+#' Returns the momentum of the \code{\link{Net}}
+#' 
+#' @inheritParams getInitialMomentum
+#' @seealso \link{getInitialMomentum}
+#' @export
+setMethod(
+  f="getInitialMomentum",
+  signature="Net",
+  definition=function(net){
+    return (net@initialMomentum )
+  }
+)
+
+#' Returns the current momentum of the \code{\link{Net}}.
 #'
 #' @param net A instance of the class \code{\link{Net}}.
 #'
@@ -142,7 +181,14 @@ setMethod(
   f="getMomentum",
   signature="Net",
   definition=function(net){
-    return (net@momentum )
+    momentum <- net@initialMomentum
+    
+    if (net@epochs >= net@momentumSwitch)
+    {
+      momentum <- net@finalMomentum
+    }
+    
+    return (momentum)
   }
 )
 
@@ -164,6 +210,26 @@ setMethod(
   signature="Net",
   definition=function(net){
     return (net@momentumSwitch )
+  }
+)
+
+#' Returns the number of epochs the \code{\linkS4class{Net}} was trained for
+#'
+#' @param net An instance of the class \code{\linkS4class{Net}}.
+#' 
+#' @export
+setGeneric("getEpochs",function(net){standardGeneric("getEpochs")})
+
+#' Returns the number of epochs the \code{\linkS4class{Net}} was trained for
+#' 
+#' @inheritParams getEpochs
+#' @seealso \link{getEpochs}
+#' @export
+setMethod(
+  f="getEpochs",
+  signature="Net",
+  definition=function(net){
+    return (net@epochs)
   }
 )
 
@@ -191,7 +257,7 @@ setMethod(
 #' Returns the list of statistics for the network
 #' 
 #' The list of statistics can contain values about errors, miss 
-#' classifications and other usefull things from the pre-training or fine-tuning
+#' classifications and other useful things from the pre-training or fine-tuning
 #'  of a deep architecture.
 #'
 #' @param net A instance of the class \code{\link{Net}}.
@@ -213,5 +279,25 @@ setMethod(
   signature="Net",
   definition=function(net){
     return (net@stats)
+  }
+)
+
+#' Returns whether weight normalization is active
+#'
+#' @param net An instance of the class \code{\linkS4class{Net}}.
+#' 
+#' @export
+setGeneric("getNormalizeWeights",function(net){standardGeneric("getNormalizeWeights")})
+
+#' Returns whether weight normalization is active
+#' 
+#' @inheritParams getNormalizeWeights
+#' @seealso \link{getNormalizeWeights}
+#' @export
+setMethod(
+  f="getNormalizeWeights",
+  signature="Net",
+  definition=function(net){
+    return (net@normalizeWeights)
   }
 )

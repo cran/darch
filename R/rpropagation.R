@@ -1,12 +1,29 @@
-#' Resilient-Backpropgation training for deep architectures.
+# Copyright (C) 2013-2015 Martin Drees
+#
+# This file is part of darch.
+#
+# darch is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# darch is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with darch. If not, see <http://www.gnu.org/licenses/>.
+
+#' Resilient backpropagation training for deep architectures.
 #' 
-#' The function traines a deep architecture with the resilient backpropagation
+#' The function trains a deep architecture with the resilient backpropagation
 #' algorithm. It is able to use four different types of training (see details).
-#' For details of the resilient backpropagation algorith see the references.
+#' For details of the resilient backpropagation algorithm see the references.
 #' 
 #' @details
 #' The code for the calculation of the weight change is a translation from the
-#' matlab code from the Rprop Optimization Toolbox implemented by R. Calandra 
+#' MATLAB code from the Rprop Optimization Toolbox implemented by R. Calandra 
 #' (see References).
 #' 
 #' Copyright (c) 2011, Roberto Calandra. All rights reserved. Redistribution and
@@ -29,12 +46,11 @@
 #'  direct, indirect, incidental, special, exemplary, or consequential damages 
 #'  however caused and on any theory of liability whether in contract, strict 
 #'  liability or tort arising in any way out of the use of this software, even 
-#'  if advised of the possibility of such damage. 
+#. If advised of the possibility of such damage. 
 #' 
 #' @param darch The deep architecture to train
 #' @param trainData The training data
 #' @param targetData The expected output for the training data
-#' @param epoch The number of training iterations
 #' @param method The method for the training. Default is "iRprop+"
 #' @param decFact Decreasing factor for the training. Default is \code{0.5}.
 #' @param incFact Increasing factor for the training Default is \code{1.2}.
@@ -42,8 +58,9 @@
 #' @param initDelta Initialisation value for the update. Default is \code{0.0125}.
 #' @param minDelta Lower bound for step size. Default is \code{0.000001}
 #' @param maxDelta Upper bound for step size. Default is \code{50}
+#' @param ... Further parameters.
 #' 
-#' @return \code{darch} - The trained deep architecture
+#' @return \linkS4class{DArch} - The trained deep architecture
 #' 
 #' @details
 #' The possible training methods (parameter \code{method}) are the following 
@@ -55,11 +72,6 @@
 #' iRprop-: \tab Improved Rprop with Weight-Backtracking\cr
 #' } 
 #'
-#'
-#' @usage rpropagation(darch,trainData,targetData,epoch,method="iRprop+", 
-#' decFact=0.5,incFact=1.2,weightDecay=0,
-#' initDelta=0.0125,minDelta=0.000001,maxDelta=50)
-#' 
 #' @references
 #' M. Riedmiller, H. Braun. A direct adaptive method for faster backpropagation
 #' learning: The RPROP algorithm. In Proceedings of the IEEE International
@@ -75,14 +87,12 @@
 #' Publishers Inc., San Francisco, CA, USA, 1995.
 #' 
 #' @seealso \code{\link{DArch}}
-#' 
-#' @docType methods
-#' @rdname rpropagation
-#' @include darch.R
+#' @family fine-tuning functions
 #' @export
-rpropagation <- function(darch,trainData,targetData,epoch,method="iRprop+",
-                         decFact=0.5,incFact=1.2,weightDecay=0,initDelta=0.0125,
-                         minDelta=0.000001,maxDelta=50){
+rpropagation <- function(darch, trainData, targetData, method="iRprop+",
+                         decFact=0.5, incFact=1.2, weightDecay=0,
+                         initDelta=0.0125, minDelta=0.000001, maxDelta=50, ...){
+  matMult <- get("matMult", darch.env)
   numLayers <- length(getLayers(darch))
   delta <- list()
   gradients <- list()
@@ -90,62 +100,64 @@ rpropagation <- function(darch,trainData,targetData,epoch,method="iRprop+",
   derivatives <- list()
   stats <- getStats(darch)
   
-  # If the batch size is 1, the data must be converted to a matrix
-  if(is.null(dim(trainData))){
-    trainData <- t(as.matrix(trainData))
-  }
-  
   # 1. Forwardpropagate
-  data <- trainData
+  data <- applyDropoutMask(trainData, getDropoutMask(darch, 0))
   numRows <- dim(data)[1]
   for(i in 1:numLayers){
     data <- cbind(data,rep(1,numRows))
+    weights <- getLayerWeights(darch,i)
     func <- getLayerFunction(darch,i)
-    ret <- func(data,getLayerWeights(darch,i))
+    
+    # apply dropout masks to weights, unless we're on the last layer; this is
+    # done to allow activation functions to avoid considering values that are
+    # later going to be dropped
+    if (i < numLayers)
+    {
+      weights <- applyDropoutMask(weights, getDropoutMask(darch, i))
+    }
+    
+    ret <- func(data, weights)
+    
+    # apply dropout masks to output, unless we're on the last layer
+    if (i < numLayers)
+    {
+      ret[[1]] <- applyDropoutMask(ret[[1]], getDropoutMask(darch, i))
+      ret[[2]] <- applyDropoutMask(ret[[2]], getDropoutMask(darch, i))
+    }
+    
     outputs[[i]] <- ret[[1]]
     data <- ret[[1]]
     derivatives[[i]] <- ret[[2]]
   }
   rm(data,numRows,func,ret)
   
-  # Old Forwardpropagate
-  #darch <- getExecuteFunction(darch)(darch,trainData)
-  #outputs <- getExecOutputs(darch)
-  
   # 2. Calculate the Error on the network output
   output <- cbind(outputs[[numLayers-1]][],rep(1,dim(outputs[[numLayers-1]])[1]))
   error <- (targetData - outputs[[numLayers]][])
   delta[[numLayers]] <- error * derivatives[[numLayers]]
-  gradients[[numLayers]] <- t(-t(delta[[numLayers]])%*%output)
+  gradients[[numLayers]] <- t(matMult(-t(delta[[numLayers]]), output))
   
   errOut <- getErrorFunction(darch)(targetData,outputs[[numLayers]][])
-  flog.debug(paste("Pre-Batch",errOut[[1]],errOut[[2]]))
+  #flog.debug(paste("Pre-Batch",errOut[[1]],errOut[[2]]))
   newE <- errOut[[2]]
-  
-  # Use only entrys bigger than index 3 in the stats-list
-  if(length(stats) < 5){
-    stats[[5]] <- c(newE)
-    oldE <- Inf
-  }else{
-    stats[[5]] <- c(stats[[5]],newE)
-    oldE <- stats[[5]][length(stats[[5]])-1]
-  }
+  oldE <- if (is.null(stats[["oldE"]])) Inf else stats[["oldE"]]
+  stats[["oldE"]] <- newE
   
   # 4. Backpropagate the error
   for(i in (numLayers-1):1){
     
     weights <- getLayerWeights(darch,i+1)
-    weights <- weights[1:(nrow(weights)-1),]
+    weights <- weights[1:(nrow(weights) - 1),, drop = F]
     
-    if(i > 1){
+    if (i > 1){
       output <- cbind(outputs[[i-1]][],rep(1,dim(outputs[[i-1]])[1]))
     }else{
       output <- cbind(trainData,rep(1,dim(trainData)[1]))
     }
     
-    error <-  delta[[i+1]] %*% t(weights)
+    error <-  matMult(delta[[i+1]], t(weights))
     delta[[i]] <- error * derivatives[[i]]
-    gradients[[i]] <- -t(t(delta[[i]])%*%output)
+    gradients[[i]] <- -t(matMult(t(delta[[i]]), output))
   }
   rm(delta,error,output)
   
@@ -154,9 +166,9 @@ rpropagation <- function(darch,trainData,targetData,epoch,method="iRprop+",
   for(i in 1:numLayers){
     weights <- getLayerWeights(darch,i)
     
-    gradients[[i]] <- gradients[[i]] + weightDecay*weights
+    #gradients[[i]] <- gradients[[i]] + weightDecay*weights
     
-    if(length(getLayer(darch,i)) < 3){
+    if (length(getLayer(darch,i)) < 3){
       setLayerField(darch,i,3) <- matrix(0,nrow(gradients[[i]]),ncol(gradients[[i]])) # old gradients
       setLayerField(darch,i,4) <- matrix(initDelta,nrow(weights),ncol(weights)) # old deltas
       setLayerField(darch,i,5) <- matrix(0,nrow(weights),ncol(weights)) # old deltaWs
@@ -173,34 +185,30 @@ rpropagation <- function(darch,trainData,targetData,epoch,method="iRprop+",
       pmax(oldDelta*decFact,minD)*(gg<0) + 
       oldDelta*(gg==0)
     
-    if(method == "Rprop+"){
+    if (method == "Rprop+"){
       deltaW <- -sign(gradients[[i]])*delta*(gg>=0) - oldDeltaW*(gg<0)
       gradients[[i]] <- gradients[[i]]*(gg>=0)
     }
     
-    if(method == "Rprop-"){
+    if (method == "Rprop-"){
       deltaW <- -sign(gradients[[i]])*delta
     }
     
-    if(method == "iRprop+"){
+    if (method == "iRprop+"){
       deltaW <- -sign(gradients[[i]])*delta*(gg>=0) - oldDeltaW*(gg<0)*(newE>oldE)
       gradients[[i]] <- gradients[[i]]*(gg>=0)
     }
     
-    if(method == "iRprop-"){
+    if (method == "iRprop-"){
       gradients[[i]] <- gradients[[i]]*(gg>=0)
       deltaW <- -sign(gradients[[i]])*delta
     }
     
-    if(epoch > getMomentumSwitch(darch)){
-      setMomentum(darch) <- getFinalMomentum(darch) 
-    }
+    biases <- weights[nrow(weights),, drop = F]
+    weights <- weights[1:(nrow(weights)-1),, drop = F]
     
-    biases <- t(as.matrix(weights[nrow(weights),]))
-    weights <- as.matrix(weights[1:(nrow(weights)-1),])
-    
-    weights <- weights + deltaW[1:(nrow(deltaW)-1),] + (getMomentum(darch) * oldDeltaW[1:(nrow(deltaW)-1),])
-    biases <- biases + deltaW[nrow(deltaW),]
+    weights <- weights * (1 - weightDecay) + (deltaW[1:(nrow(deltaW)-1),] + (getMomentum(darch) * oldDeltaW[1:(nrow(deltaW)-1),])) * getDropoutMask(darch, i-1)
+    biases <- biases * (1 - weightDecay) + deltaW[nrow(deltaW),]
     setLayerWeights(darch,i) <- rbind(weights,biases)
     
     setLayerField(darch,i,3) <- gradients[[i]]

@@ -1,3 +1,20 @@
+# Copyright (C) 2013-2015 Martin Drees
+#
+# This file is part of darch.
+#
+# darch is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# darch is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with darch. If not, see <http://www.gnu.org/licenses/>.
+
 #' Sets the batch size of the \code{\link{Net}}.
 #'
 #' @param net A instance of the class \code{\link{Net}}.
@@ -103,7 +120,7 @@ setReplaceMethod(
   f="setLogLevel",
   signature="Net",
   definition=function(net,value){
-    if(value == TRACE | 
+    if (value == TRACE | 
        value == DEBUG |
        value == WARN | 
        value == ERROR | 
@@ -121,7 +138,7 @@ setReplaceMethod(
 #' Sets the function for generating weight matrices.
 #' 
 #' The function have to return a matrix with number of units in the lower layer
-#' as number of rows and number of units in the upper layer as the nubmer of 
+#' as number of rows and number of units in the upper layer as the number of 
 #' columns.
 #'
 #' @param net A instance of the class \code{\link{Net}}.
@@ -170,26 +187,24 @@ setReplaceMethod(
   }
 )
 
-#' Sets the momentum of the \code{\link{Net}}.
+#' Sets the initial momentum of the \code{\linkS4class{Net}}
 #' 
 #' @param net A instance of the class \code{\link{Net}}.
 #' @param value Object of the class \code{numeric}.
 #' 
-#' @seealso \code{\link{Net}}
-#' 
 #' @export
-#' @docType methods
-#' @rdname setMomentum-methods
-setGeneric("setMomentum<-",function(net,value){standardGeneric("setMomentum<-")})
+setGeneric("setInitialMomentum<-",function(net,value){standardGeneric("setInitialMomentum<-")})
 
-#' @rdname setMomentum-methods
-#' @aliases setMomentum<-,Net-method
-#' @name setMomentum
+#' Sets the initial momentum of the \code{\linkS4class{Net}}
+#' 
+#' @inheritParams setInitialMomentum<-
+#' @seealso \link{setInitialMomentum<-}
+#' @export
 setReplaceMethod(
-  f="setMomentum",
+  f="setInitialMomentum",
   signature="Net",
   definition=function(net,value){
-    net@momentum <-value
+    net@initialMomentum <-value
     return (net)
   }
 )
@@ -245,7 +260,7 @@ setReplaceMethod(
 #' Adds a list of statistics to the network
 #' 
 #' The list of statistics can contain values about errors, miss 
-#' classifications and other usefull things from the pre-training or fine-tuning
+#' classifications and other useful things from the pre-training or fine-tuning
 #'  of a deep architecture.
 #' 
 #' @usage setStats(net) <- value
@@ -267,6 +282,56 @@ setReplaceMethod(
   signature="Net",
   definition=function(net,value){
     net@stats <- value
+    return (net)
+  }
+)
+
+#' Increment the number of epochs this \code{\linkS4class{Net}} has been trained
+#' for
+#'
+#' @param net A instance of the class \code{\link{Net}}.
+#'   
+#' @export
+#' @include net.R
+setGeneric("incrementEpochs",function(net){standardGeneric("incrementEpochs")})
+
+#' Increment the number of epochs this \code{\linkS4class{Net}} has been trained
+#' for
+#' 
+#' @inheritParams incrementEpochs
+#' @seealso \link{incrementEpochs}
+#' @export
+setMethod(
+  f="incrementEpochs",
+  signature="Net",
+  definition=function(net){
+    net@epochs <- net@epochs + 1
+    return (net)
+  }
+)
+
+#' Set whether weight normalization should be performed
+#'
+#' @param net A instance of the class \code{\link{Net}}.
+#' @param value Boolean value indicating whether the weights should be
+#' normalized
+#' 
+#' @seealso \code{\link{Net}}
+#' 
+#' @export
+#' @include net.R
+setGeneric("setNormalizeWeights<-",function(net,value){standardGeneric("setNormalizeWeights<-")})
+
+#' Set whether weight normalization should be performed
+#' 
+#' @inheritParams setNormalizeWeights<-
+#' @seealso \link{setNormalizeWeights<-}
+#' @export
+setReplaceMethod(
+  f="setNormalizeWeights",
+  signature="Net",
+  definition=function(net,value){
+    net@normalizeWeights <- value
     return (net)
   }
 )

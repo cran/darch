@@ -1,3 +1,20 @@
+# Copyright (C) 2013-2015 Martin Drees
+#
+# This file is part of darch.
+#
+# darch is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# darch is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with darch. If not, see <http://www.gnu.org/licenses/>.
+
 #' Sets the states of the hidden units
 #'
 #' @param rbm A instance of the class \code{\link{RBM}}.
@@ -126,10 +143,10 @@ setReplaceMethod(
   }
 )
 
-#' Sets the learnig rates of the biases for the hidden units
+#' Sets the learning rates of the biases for the hidden units
 #'
 #' @param rbm A instance of the class \code{\link{RBM}}.
-#' @param value The learnig rates of the biases for the hidden units
+#' @param value The learning rates of the biases for the hidden units
 #' @usage setLearnRateBiasHidden(rbm) <- value
 #' 
 #' @seealso \code{\link{RBM}}
@@ -199,8 +216,14 @@ setReplaceMethod(
   f="setWeights",
   signature="RBM",
   definition=function(rbm,value){
-    if(rbm@ff){
-      if(is.ff(rbm@ffWeights) == FALSE){
+    # weight normalization
+    if (rbm@normalizeWeights)
+    {
+      value <- apply(value, 2, function (e) { e/norm(e, "2") })
+    }
+    
+    if (rbm@ff){
+      if (is.ff(rbm@ffWeights) == FALSE){
         rbm@ffWeights <- ff(vmode="double",dim=dim(value))
       }
       rbm@ffWeights[] <- value
@@ -233,8 +256,8 @@ setReplaceMethod(
   f="setHiddenBiases",
   signature="RBM",
   definition=function(rbm,value){
-    if(rbm@ff){
-      if(!is.ff(rbm@ffHiddenBiases)){
+    if (rbm@ff){
+      if (!is.ff(rbm@ffHiddenBiases)){
         rbm@ffHiddenBiases <- ff(vmode="double",dim=dim(value))
       }
       rbm@ffHiddenBiases[] <- value
@@ -292,8 +315,8 @@ setReplaceMethod(
   f="setVisibleBiases",
   signature="RBM",
   definition=function(rbm,value){
-    if(rbm@ff){
-      if(!is.ff(rbm@ffVisibleBiases)){
+    if (rbm@ff){
+      if (!is.ff(rbm@ffVisibleBiases)){
         rbm@ffVisibleBiases <- ff(vmode="double",dim=dim(value))
       }
       rbm@ffVisibleBiases[] <- value
@@ -481,8 +504,8 @@ setReplaceMethod(
   f="setOutput",
   signature="RBM",
   definition=function(rbm,value){
-    if(rbm@ff){
-      if(!is.ff(rbm@output)){
+    if (rbm@ff){
+      if (!is.ff(rbm@output)){
         rbm@ffOutput <- ff(vmode="double",dim=dim(value))
       }
       rbm@ffOutput[] <- value

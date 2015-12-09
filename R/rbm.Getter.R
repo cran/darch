@@ -1,3 +1,20 @@
+# Copyright (C) 2013-2015 Martin Drees
+#
+# This file is part of darch.
+#
+# darch is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# darch is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with darch. If not, see <http://www.gnu.org/licenses/>.
+
 #' Returns a list with the states of the visible units.
 #' 
 #' @param rbm A instance of the class \code{\link{RBM}}.
@@ -64,7 +81,7 @@ setMethod(
   f="getOutput",
   signature="RBM",
   definition=function(rbm){
-    if(rbm@ff){
+    if (rbm@ff){
       return(rbm@ffOutput[])
     }
     return (rbm@output)
@@ -203,7 +220,7 @@ setMethod(
   }
 )
 
-#' Returns the weigths of the \code{\link{RBM}}.
+#' Returns the weights of the \code{\link{RBM}}.
 #' 
 #' @param rbm A instance of the class \code{\link{RBM}}.
 #' @usage getWeights(rbm)
@@ -225,7 +242,7 @@ setMethod(
   f="getWeights",
   signature="RBM",
   definition=function(rbm){
-    if(rbm@ff){
+    if (rbm@ff){
       return(rbm@ffWeights[])
     }
     return(rbm@weights)
@@ -254,7 +271,7 @@ setMethod(
   f="getHiddenBiases",
   signature="RBM",
   definition=function(rbm){
-    if(rbm@ff){
+    if (rbm@ff){
       return(rbm@ffHiddenBiases[])
     }
     return (rbm@hiddenBiases)
@@ -309,7 +326,7 @@ setMethod(
   f="getVisibleBiases",
   signature="RBM",
   definition=function(rbm){
-    if(rbm@ff){
+    if (rbm@ff){
       return(rbm@ffVisibleBiases[])
     }
     return (rbm@visibleBiases)
@@ -368,12 +385,12 @@ setMethod(
   }
 )
 
-#' Returns the data for the positive phaes.
+#' Returns the data for the positive phase.
 #' 
 #' @param rbm A instance of the class \code{\link{RBM}}.
 #' @usage getPosPhaseData(rbm)
 #' @seealso \code{\link{RBM}}
-#' @return The data for the positive phaes.
+#' @return The data for the positive phase.
 #' 
 #' @seealso \code{\link{RBM}}
 #' 
