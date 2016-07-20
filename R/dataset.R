@@ -1,9 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
-#
-# Based partly on code from nnet.
-# copyright (C) 1994-2013 W. N. Venables and B. D. Ripley
-#
-# Scaling code based on code from package e1071.
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -31,29 +27,35 @@
 #' @slot formula \code{\link{formula}} for the data.
 #' @slot parameters Fit parameters.
 #' @exportClass DataSet
-#' @aliases DataSet dataset
+#' @rdname DataSet
+#' @family darch classes
+#' @keywords internal
 setClass(
-  Class="DataSet",
-  representation=representation(
-    data = "matrix",
+  Class = "DataSet",
+  representation = representation(
+    data = "ANY",
     targets = "ANY",
     formula = "ANY",
     parameters = "ANY"
   )
 )
 
-setMethod ("initialize","DataSet",
-           function(.Object){	
-             .Object@data <- matrix()
-             .Object@targets <- NULL
-             .Object@formula <- NULL
-             .Object@parameters <- NULL
-             return(.Object)
-           }
+setMethod("initialize","DataSet",
+  function(.Object)
+  {
+    .Object@data <- matrix()
+    .Object@targets <- NULL
+    .Object@formula <- NULL
+    .Object@parameters <- NULL
+    return(.Object)
+  }
 )
 
 #' Create data set using data, targets, a formula, and possibly an existing data
 #' set.
+#' 
+#' Based partly on code from nnet.
+#  copyright (C) 1994-2013 W. N. Venables and B. D. Ripley
 #' 
 #' @param data Input data, possibly also target data if a formula is used.
 #' @param targets Target data.
@@ -64,70 +66,36 @@ setMethod ("initialize","DataSet",
 #' @return New \code{\linkS4class{DataSet}}
 #' @seealso \link{createDataSet.default}, \link{createDataSet.formula},
 #'  \link{createDataSet.DataSet}
-#' @export
+#' @keywords internal
 setGeneric(
   name="createDataSet",
   def=function(data, targets, formula, dataSet, ...) { standardGeneric("createDataSet") }
 )
 
-createDataSet.formula <- function(data, formula, ..., subset, na.action, contrasts=NULL, scale=F)
+createDataSet.formula <- function(data, formula, ..., na.action = na.pass,
+                                  previous.dataSet = new("DataSet"))
 {
-  if (is.matrix(data))
+  numRows <- nrow(data)
+  m <- model.frame(formula = formula, data = data, na.action = na.action)
+  
+  # TODO remove both na.action and this, caret can handle all of that
+  if (nrow(m) < numRows)
   {
-    data <- as.data.frame(data)
+    futile.logger::flog.warn(
+      "%s rows containing NAs were dropped from the dataset", numRows - nrow(m))
   }
   
-  m <- model.frame(formula=formula, data=data, na.action=na.action)
-  
+  # Split into x and y data frames
   Terms <- attr(m, "terms")
-  x <- model.matrix(Terms, m, contrasts)
-  cons <- attr(x, "contrast")
-  assign <- attr(x, "assign")
-  y <- model.response(m)
+  x <- m[,attr(Terms, "term.labels")]
+  y <- if (length(model.response(m)) > 0) model.response(m) else NULL
   
-  # remove intercept column if necessary
-  xint <- match("(Intercept)", colnames(x), nomatch=0)
-  if (xint > 0)
-  {
-    x <- x[, -xint, drop=F]
-  }
-  colnames(x) <- attr(Terms, "term.labels")
+  previous.dataSet@formula <- stats::formula(Terms)
+  previous.dataSet@parameters$terms <- Terms
+  previous.dataSet@parameters$na.action <- na.action
+  dataSet <- preProcessData(x, y, ..., previous.dataSet = previous.dataSet)
   
-  res <- NULL
-  lev <- NULL
-  yscale = T
-  
-  # convert y to numeric
-  if(is.factor(y))
-  {
-    res <- factorToNumeric(y)
-    y <- res$y
-    lev <- res$lev
-  }
-
-  dataSet <- new("DataSet")
-  dataSet@data <- as.matrix(x)
-  dataSet@targets <- as.matrix(y)
-  dataSet@formula <- formula
-  # TODO which ones are needed?
-  dataSet@parameters$terms <- Terms
-  dataSet@parameters$coefnames <- colnames(x)
-  dataSet@parameters$call <- match.call()
-  dataSet@parameters$na.action <- attr(m, "na.action")
-  dataSet@parameters$contrasts <- cons
-  dataSet@parameters$assign <- assign
-  dataSet@parameters$xlevels <- .getXlevels(Terms, m)
-  dataSet@parameters$ylevels <- lev
-  dataSet <- scaleData(dataSet, scale)
-  
-  # TODO move somewhere else?
-  if (!missing(subset))
-  {
-    dataSet@data <- dataSet@data[subset,,drop=F]
-    dataSet@targets <- dataSet@targets[subset,,drop=F]
-  }
-  
-  return(dataSet)
+  dataSet
 }
 
 #' Constructor function for \code{\linkS4class{DataSet}} objects.
@@ -140,128 +108,77 @@ createDataSet.formula <- function(data, formula, ..., subset, na.action, contras
 #'   
 #' @inheritParams darch.formula
 #' @inheritParams createDataSet,ANY,ANY,missing,missing-method
+#' @param data \code{\link{data.frame}} containing the dataset.
 #' @param formula Model formula.
-#' @param subset Row indexing vector, \strong{not} parameter to
-#'   \code{\link{model.frame}}
 #' @param na.action \code{\link{model.frame}} parameter
-#' @param contrasts \code{\link{model.frame}} parameter
+#' @param previous.dataSet Existing \code{\linkS4class{DataSet}} from which
+#'   parameters are extrated and re-used.
 #' @return The new \code{\linkS4class{DataSet}} object
 #' @seealso \link{darch.formula}, \link{createDataSet}
 #' @aliases createDataSet.formula
-#' @export
+#' @keywords internal
 setMethod(
   "createDataSet",
-  signature(data="ANY", targets="missing", formula="formula", dataSet="missing"),
-  definition=createDataSet.formula
+  signature(data = "ANY", targets = "missing", formula = "formula",
+    dataSet = "missing"),
+  definition = createDataSet.formula
 )
 
-createDataSet.default <- function(data, targets, ..., scale=F)
+createDataSet.default <- function(data, targets, ...)
 {
   data <- as.matrix(data)
-  targets <- if (!is.null(targets)) as.matrix(targets) else NULL
-  if(any(is.na(data))) stop("missing values in 'data'")
-  if(any(is.na(data))) stop("missing values in 'targets'")
-  if(!is.null(targets) && dim(data)[1L] != dim(targets)[1L])
-    stop("nrows of 'data' and 'targets' must match")
-  
-  dataSet <- new("DataSet")
-  dataSet@data <- data
-  dataSet@targets <- targets
-  dataSet <- scaleData(dataSet, scale)
-  
-  return(dataSet)
+  targets <- if (!is.null(targets) && is.null(dim(targets)))
+    data.frame(y = targets) else targets
+  if (!is.null(targets) && dim(data)[1] != dim(targets)[1])
+    stop(futile.logger::flog.error(
+      "Number of rows of 'data' and 'targets' must match"))
+
+  preProcessData(data, targets, ...)
 }
 
 #' Create \code{\linkS4class{DataSet}} using data and targets.
 #' 
 #' @inheritParams createDataSet
-#' @param scale Logical indicating whether to scale the data.
 #' @seealso \link{createDataSet}
 #' @aliases createDataSet.default
-#' @export
+#' @keywords internal
 setMethod(
   "createDataSet",
-  signature(data="ANY", targets="ANY", formula="missing", dataSet="missing"),
-  definition=createDataSet.default
+  signature(data = "ANY", targets = "ANY", formula = "missing", dataSet = "missing"),
+  definition = createDataSet.default
 )
 
 createDataSet.DataSet <- function(data, targets, dataSet, ...)
 {
-  y <- matrix(0)
-  
+  # formula fit
   if (!is.null(dataSet@formula))
   {
-    # formula fit
-    data <- as.data.frame(data)
-    # TODO remove
-    #rn <- row.names(data)
-    
     # Remove response from formula if no target data provided
     Terms <- dataSet@parameters$terms
-    if (targets == F)
+    
+    if (!missing(targets) && is.logical.length1(targets, F))
     {
       Terms <- delete.response(dataSet@parameters$terms)
     }
-
-    # work hard to predict NA for rows with missing data
-    m <- model.frame(Terms, data, na.action = dataSet@parameters$na.action,
-                     xlev = dataSet@parameters$xlevels)
-    if (!is.null(cl <- attr(Terms, "dataClasses")))
-      .checkMFClasses(cl, m)
-    # TODO remove
-    #keep <- match(row.names(m), rn)
-    x <- model.matrix(Terms, m, contrasts = dataSet@parameters$contrasts)
-    xint <- match("(Intercept)", colnames(x), nomatch=0)
-    if (xint > 0) x <- x[, -xint, drop=FALSE]
     
-    if (targets != F)
-    {
-      y <- model.response(m)
-      # convert y to numeric
-      if(is.factor(y))
-      {
-        y <- factorToNumeric(y, dataSet@parameters$ylevels)$y
-      }
-    }
+    dataSet <- createDataSet(data = data, formula = stats::formula(Terms), ...,
+      na.action = dataSet@parameters$na.action, previous.dataSet = dataSet)
   }
   else
   {
-    # matrix fit
-    if (is.null(dim(data)))
-      dim(data) <- c(1L, length(data)) # a row vector
-    x <- as.matrix(data) # to cope with dataframes
-    if (any(is.na(x))) stop("missing values in 'data'")
+    if (is.null(dim(data))) dim(data) <- c(1, length(data))
+    y <- NULL
     
-    if (!is.null(targets) && (length(targets) > 1 || targets != F))
+    if (!missing(targets) && !is.null(targets))
     {
-      y <- targets
-      
-      if (is.factor(y))
-      {
-        y <- factorToNumeric(y, dataSet@parameters$ylevels)$y
-      }
+      y <- if (!is.null(dim(targets))) targets else data.frame(y = targets)
     }
+    
+    dataSet <- createDataSet(data = data, targets = y, ...,
+      previous.dataSet = dataSet)
   }
   
-  # If scaling parameters exist, rescale new data according to them
-  if (any(dataSet@parameters$scaled))
-  {
-    x[,dataSet@parameters$scaled] <-
-      scale(x[,dataSet@parameters$scaled, drop = F],
-            center = dataSet@parameters$xscale$"scaled:center",
-            scale = dataSet@parameters$xscale$"scaled:scale")
-    
-    if (!is.null(dataSet@parameters$yscale))
-    {
-      y <- scale(y, center = dataSet@parameters$yscale$"scaled:center",
-                 scale = dataSet@parameters$yscale$"scaled:scale")
-    }
-  }
-  
-  dataSet@data <- x
-  dataSet@targets <- y
-  
-  return(dataSet)
+  dataSet
 }
 
 #' Create new \code{\linkS4class{DataSet}} by filling an existing one with new 
@@ -272,52 +189,13 @@ createDataSet.DataSet <- function(data, targets, dataSet, ...)
 #' @inheritParams createDataSet
 #' @aliases createDataSet.DataSet
 #' @seealso \link{createDataSet}
-#' @export
+#' @keywords internal
 setMethod(
   "createDataSet",
-  signature(data="ANY", targets="ANY", formula="missing", dataSet="DataSet"),
-  definition=createDataSet.DataSet
+  signature(data = "ANY", targets = "ANY", formula = "missing",
+    dataSet = "DataSet"),
+  definition = createDataSet.DataSet
 )
-
-factorToNumeric <- function(y, lev=NULL)
-{
-  # TODO documentation
-  class.ind <- function(cl)
-  {
-    n <- length(cl)
-    x <- matrix(0, n, length(levels(cl)))
-    x[(1L:n) + n * (as.vector(unclass(cl)) - 1L)] <- 1
-    dimnames(x) <- list(names(cl), levels(cl))
-    x
-  }
-  
-  lev <- if (!is.null(lev)) lev else levels(y)
-  counts <- table(y)
-  
-  if(any(counts == 0L))
-  {
-    empty <- lev[counts == 0L]
-    flog.warn("Empty groups:")
-    print(empty)
-    
-    y <- factor(y, levels=lev[counts > 0L])
-  }
-  
-  if(length(lev) == 2L)
-  {
-    y <- as.vector(unclass(y)) - 1
-  }
-  else
-  {
-    y <- class.ind(y)
-  }
-  
-  res <- NULL
-  res$y <- y
-  res$lev <- lev
-  
-  return(res)
-}
 
 #' Validate \code{\linkS4class{DataSet}}
 #' 
@@ -331,41 +209,43 @@ factorToNumeric <- function(y, lev=NULL)
 #' @param darch \code{\linkS4class{DArch}} object to validate this 
 #'   \code{\linkS4class{DataSet}} against.
 #' @return Logical indicating whether the \code{\linkS4class{DataSet}} is valid.
-#' @export
+#' @keywords internal
 setGeneric("validateDataSet",function(dataSet, darch){standardGeneric("validateDataSet")})
 
 #' Validate \code{\linkS4class{DataSet}}
 #' 
 #' @inheritParams validateDataSet
 #' @seealso \link{validateDataSet}
-#' @export
+#' @keywords internal
 setMethod(
-  f="validateDataSet",
-  signature="DataSet",
-  definition=function(dataSet, darch)
-  {
+  f = "validateDataSet",
+  signature = "DataSet",
+  definition = function(dataSet, darch)
+  { 
     # first check whether non-numeric data exists in the data
-    if (!all(is.numeric(dataSet@data), is.null(dataSet@targets) || is.numeric(dataSet@targets)))
+    if (any(is.na(dataSet@data)) || (!is.null(dataSet@targets)
+        && any(is.na(dataSet@targets))))
     {
-      flog.error(paste("DataSet is not numeric, please convert ordinal or",
-                       "nominal data to numeric first."))
+      futile.logger::flog.error(paste("Dataset contains NA data, please",
+                       "convert manually or use the caret package."))
       
       return(F)
     }
-    
+
     # if we have targets, validate network structure
     if (!is.null(dataSet@targets))
     {
       # compare number of neurons in input and output layer to columns in data set
-      neuronsInput <- dim(getLayerWeights(darch, 1))[1]-1
-      neuronsOutput <- dim(getLayerWeights(darch, length(getLayers(darch))))[2]
+      neuronsInput <- dim(darch@layers[[1]][["weights"]])[1] - 1
+      neuronsOutput <- dim(darch@layers[[length(darch@layers)]][["weights"]])[2]
       if (!all(neuronsInput == ncol(dataSet@data),
-               neuronsOutput == ncol(dataSet@targets)))
+               neuronsOutput == ncol(dataSet@targets) || !getParameter(".darch.isClass")))
       {
-        flog.error(paste("DataSet incompatible with DArch,",
-                         "number of neurons in the first and last layer have",
-                         "to equal the number of columns in the data and",
-                         "targets, respectively."))
+        futile.logger::flog.error(paste(
+          "DataSet incompatible with DArch, number of neurons in the first",
+          "and last layer have to equal the number of columns in the data",
+          "(%s) and columns or classes in the targets (%s)"),
+          ncol(dataSet@data), ncol(dataSet@targets))
         
         return(F)
       }
@@ -375,61 +255,232 @@ setMethod(
   }
 )
 
-scaleData <- function(dataSet, scale)
+# Dataset pre-processing
+preProcessData <- function(x, y, ..., previous.dataSet = new("DataSet"),
+  preProc.params = F, preProc.targets = F, preProc.factorToNumeric = F,
+  preProc.factorToNumeric.targets = F, preProc.fullRank = T,
+  preProc.fullRank.targets = F, preProc.orderedToFactor.targets = T)
 {
-  x <- dataSet@data
-  y <- dataSet@targets
+  dataSet <- previous.dataSet
+  x <- simplifyDataFrame(as.data.frame(x))
   
-  if (length(scale) == 1)
+  if (!is.null(y))
   {
-    scale <- rep(scale, ncol(x))
+    y <- simplifyDataFrame(as.data.frame(y), preProc.orderedToFactor.targets)
   }
   
-  yscale <- scale[1]
+  # Seek ordered factors
+  columnsToBeConverted <- attr(which(sapply(names(x), FUN = function(n) {
+    (is.factor(x[[n]]) && preProc.factorToNumeric)
+    })), "names")
   
-  if (any(scale))
-  {
-    if (!is.null(dataSet@formula))
+  columnsToBeConvertedY <- if (!is.null(y)) attr(which(sapply(names(y),
+    FUN = function(n)
     {
-      remove <- unique(c(which(labels(dataSet@parameters$terms)
-                               %in% dataSet@parameters$contrasts),
-                         which(!scale)))
-      scale <- !dataSet@parameters$assign %in% remove
-      yscale <- scale[1]
-      scale <- scale[2:length(scale)]
+      (is.factor(y[[n]]) && preProc.factorToNumeric.targets)
+    })), "names") else c()
+  
+  # Create caret parameters during the initial run
+  if (is.null(dataSet@parameters$preProcess))
+  {
+    futile.logger::flog.info(
+      "Start initial caret pre-processing.")
+    
+    # Convert ordered factors to numeric first
+    
+    if (length(columnsToBeConverted) > 0)
+    {
+      # TODO solver cleaner
+      # These are converted here to not fall victim to dummyVars
+      x[, columnsToBeConverted] <-
+        sapply(x[, columnsToBeConverted], FUN=function(n) { as.numeric(n) })
     }
     
-    co <- !apply(x[,scale, drop = FALSE], 2, var)
-    # if we only have one row, or some fields are NA for some reason
-    co[which(is.na(co))] = T
-    if (any(co))
+    if (is.list(preProc.params))
     {
-      warning(paste("Variable(s)",
-                    paste(sQuote(colnames(x[,scale, drop = FALSE])[co]),
-                          sep="", collapse=" and "),
-                    "constant. Cannot scale data.")
-      )
-      scale <- rep(FALSE, ncol(x))
+      preProc.params$x <- x
+      
+      if (is.null(preProc.params$verbose))
+      {
+        preProc.params$verbose <-
+          (names(futile.logger::DEBUG) == futile.logger::flog.threshold())
+      }
+      
+      dataSet@parameters$preProcess <-
+        eval(as.call(c(list(quote(caret::preProcess)), preProc.params)))
+      
+      # Remove data again
+      preProc.params$x <- NULL
+      
+      futile.logger::flog.info("Result of preProcess for data:")
+      futile.logger::flog.info(
+        { print(dataSet@parameters$preProcess); NULL })
     }
     else
     {
-      xtmp <- scale(x[,scale])
-      x[,scale] <- xtmp
-      dataSet@parameters$xscale <- attributes(xtmp)[c("scaled:center","scaled:scale")]
+      dataSet@parameters$preProcess <- T
     }
     
-    if (yscale && !is.null(dataSet@parameters$ylevels) && is.numeric(y)
-        && ncol(as.matrix(y)) == 1)
+    dataSet@parameters$dummyVarsData <- caret::dummyVars(~., x,
+      fullRank = preProc.fullRank)
+    
+    futile.logger::flog.info(
+      "Converting non-numeric columns in data (if any)...")
+    
+    if (length(columnsToBeConverted) > 0)
     {
-      y <- scale(y)
-      dataSet@parameters$yscale <- attributes(y)[c("scaled:center","scaled:scale")]
-      y <- as.vector(y)
+      futile.logger::flog.info("Converting %s columns (%s) to numeric",
+        length(columnsToBeConverted),
+        paste(columnsToBeConverted, collapse = ", "))
+    }
+    
+    printDummyVarsFactors(dataSet@parameters$dummyVarsData,
+                          attr(dataSet@parameters$terms, "term.labels"))
+    futile.logger::flog.debug("Result of dummyVars for data:")
+    futile.logger::flog.debug({ print(dataSet@parameters$dummyVarsData); NULL })
+    
+    if (!is.null(y))
+    {
+      if (length(columnsToBeConvertedY) > 0)
+      {
+        # TODO solver cleaner, extract into method
+        # These are converted here to not fall victim to dummyVars
+        y[, columnsToBeConvertedY] <-
+          sapply(y[, columnsToBeConvertedY], FUN = function(n) { as.numeric(n) })
+      }
+      
+      if (preProc.targets)
+      {
+        dataSet@parameters$preProcessTargets <-
+          caret::preProcess(y, method = c("center", "scale"))
+        
+        futile.logger::flog.info("Result of preProcess for targets:")
+        futile.logger::flog.info(
+          { print(dataSet@parameters$preProcessTargets); NULL })
+      }
+      
+      dataSet@parameters$dummyVarsTargets <- caret::dummyVars(~., y,
+        fullRank = preProc.fullRank.targets)
+      
+      futile.logger::flog.info(
+        "Converting non-numeric columns in targets (if any)...")
+      
+      if (length(columnsToBeConvertedY) > 0)
+      {
+        futile.logger::flog.info("Converting %s columns (%s) to numeric",
+         length(columnsToBeConvertedY),
+         paste(columnsToBeConvertedY, collapse = ", "))
+      }
+      
+      printDummyVarsFactors(dataSet@parameters$dummyVarsTargets,
+        as.character(attr(dataSet@parameters$terms,
+        "variables")[-1])[attr(dataSet@parameters$terms, "response")],
+        "Dependent factor")
+      futile.logger::flog.debug("Result of dummyVars for targets:")
+      futile.logger::flog.debug(
+        { print(dataSet@parameters$dummyVarsTargets); NULL })
+    }
+    
+    dataSet@parameters$preProcessParams <- preProc.params
+  }
+  
+  if (length(columnsToBeConverted) > 0)
+  {
+    # TODO prevent double conversion if this is the initial processing
+    x[, columnsToBeConverted] <-
+      sapply(x[, columnsToBeConverted], FUN = function(n) { as.numeric(n) })
+  }
+  
+  # Pre-process data
+  if (inherits(dataSet@parameters$preProcess, "preProcess"))
+  {
+    futile.logger::flog.info("Pre-processing data set.")
+    # TODO call with preProc.params instead
+    x <- predict(dataSet@parameters$preProcess, newdata = x, verbose = T)
+  }
+  
+  dataSet@data <-
+    predict(dataSet@parameters$dummyVarsData, newdata = x)
+  
+  if (!is.null(y))
+  {
+    if (inherits(dataSet@parameters$preProcessTargets, "preProcess"))
+    {
+      y <- predict(dataSet@parameters$preProcessTargets, newdata = y,
+        verbose = T)
+    }
+    
+    if (length(columnsToBeConvertedY) > 0)
+    {
+      # TODO preven double conversion
+      y[, columnsToBeConvertedY] <-
+        sapply(y[, columnsToBeConvertedY], FUN = function(n) { as.numeric(n) })
+    }
+    
+    dataSet@targets <-
+      predict(dataSet@parameters$dummyVarsTargets, newdata = y)
+  }
+  
+  dataSet
+}
+
+# Prints which variables were converted from factors to 1:n coding
+printDummyVarsFactors <- function(dV, originalFactorNames = NULL,
+                                  prefix = "Factor")
+{
+  if (length(dV$lvls) == 0)
+  {
+    return(NULL)
+  }
+  
+  originalFactorNames <-
+    if (is.null(originalFactorNames)) names(dV$lvls) else originalFactorNames
+  factorNames <- names(dV$lvls)
+  for (i in 1:length(dV$lvls))
+  {
+    futile.logger::flog.info(
+      "%s \"%s\" converted to %s new variables (1-of-n coding)", prefix,
+      originalFactorNames[i], length(dV$lvls[[factorNames[i]]]))
+  }
+}
+
+# Remove data from dataset if necessary
+# TODO better name?
+postProcessDataSet <- function(dataSet = get("dataSet", envir = parent.frame()),
+  darch = get("darch", envir = parent.frame()))
+{
+  if (!getParameter(".retainData", F))
+  {
+    dataSet@data <- NULL
+    dataSet@targets <- NULL
+  }
+  
+  dataSet
+}
+
+# Simplifies a data.frame to only contain numeric or factor columns
+simplifyDataFrame <- function(df, orderedToFactor = F)
+{
+  # TODO solve with apply?
+  for (c in names(df))
+  {
+    if (is.numeric(df[[c]]))
+    {
+      df[[c]] <- as.numeric(df[[c]])
+    }
+    else if (!is.factor(df[[c]]))
+    {
+      levels <- unique(c(df[[c]]))
+      df[[c]] <- factor(df[[c]], labels = make.names(levels))
+      #df[[c]] <- as.factor(df[[c]]
+    }
+    else if (is.ordered(df[[c]]) && orderedToFactor)
+    {
+      futile.logger::flog.debug("Converting ordered target column %s to factor",
+        c)
+      class(df[[c]]) <- class(df[[c]])[class(df[[c]]) != "ordered"]
     }
   }
   
-  dataSet@data <- x
-  dataSet@targets <- y
-  dataSet@parameters$scaled <- scale
-  
-  return (dataSet)
+  df
 }

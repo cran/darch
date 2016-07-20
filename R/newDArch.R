@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -15,44 +16,34 @@
 # You should have received a copy of the GNU General Public License
 # along with darch. If not, see <http://www.gnu.org/licenses/>.
 
-#' Constructor function for \code{\link{DArch}} objects.
+#' Constructor function for \code{\linkS4class{DArch}} objects.
 #' 
-#' Generate a new \code{\link{DArch}} object with the given parameters.
+#' Generate a new \code{\linkS4class{DArch}} object with the given parameters.
 #' 
 #' @details
-#' It is recommended to use this function for generating a new 
-#' \code{\link{DArch}} object, because this function generates and sets all the
-#' necessary parameters like the internally used \code{\link{RBM}} networks, 
-#' the list of statistics (\code{stats}) etc.
+#' This function is used internally only, please call \code{\link{darch}}
+#' to create a new \code{\linkS4class{DArch}} instance.
 #' 
-#' @param layers Array of layer sizes.
-#' @param batchSize Size of the batches
-#' @param ff Indicates whether the \code{\link[ff]{ff}} package is used for the
-#'        weights, biases and outputs
-#' @param logLevel The logging level. 
-#'        See \code{\link{setLogLevel}} for details.
-#' @param genWeightFunc The function for generating the weight matrices
-#' 
-#' @usage newDArch(layers,batchSize,ff=FALSE, 
-#' logLevel=INFO, genWeightFunc=generateWeights)
-#' 
+#' @param params Additional parameters as a list, also stored in
+#'   \code{darch@parameters}.
 #' @return The new DArch object
-#' @include darch.R
+#' @include darch.Class.R
 #' @include darch.Setter.R
-#' 
-#' @export
-newDArch <- function(layers,batchSize,ff=FALSE, 
-                     logLevel=INFO, genWeightFunc=generateWeights){
+#' @keywords internal
+newDArch <- function(params)
+{
   darch <- new("DArch")
-  flog.threshold(logLevel)
-  flog.info(paste("Constructing a darch with ",length(layers), " layers.", sep=""))
-  setFF(darch) <- ff
-  setBatchSize(darch) <- batchSize  
-  setGenWeightFunction(darch) <- genWeightFunc
-  setStats(darch) <-
-    list("dataErrors" = list("raw"=c(), "class" = c()),
-         "validErrors" = list("raw"=c(), "class" = c()),
-         "times" = c(), "preTrainTime" = 0, "fineTuneTime" = 0)
-  darch <- generateRBMs(darch,layers,genWeightFunc)
-  return(darch)
+  darch@parameters <- params
+  layers <- getParameter(".layers")
+  futile.logger::flog.info("Constructing a network with %s layers (%s neurons).",
+            length(layers), paste(layers, collapse = ', '))
+  darch@stats <-
+    list("trainErrors" = list("raw" = c(), "class" = c()),
+         "validErrors" = list("raw" = c(), "class" = c()),
+         "dot632Errors" = list("raw" = c(), "class" = c()),
+         "times" = c(), "preTrainTime" = 0, "fineTuneTime" = 0, "validTime" = 0,
+         "numPatterns" = list("train" = 0, "valid" = 0))
+  darch <- generateRBMs(darch)
+  darch <- configureDArch(darch)
+  darch
 }

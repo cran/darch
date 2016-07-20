@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -15,44 +16,40 @@
 # You should have received a copy of the GNU General Public License
 # along with darch. If not, see <http://www.gnu.org/licenses/>.
 
-#' Resets the weights and biases of the \code{\link{RBM}} object
+#' Resets the weights and biases of the \code{RBM} object
 #' 
-#' This function resets the weights and biases of the \code{\link{RBM}} object.
+#' This function resets the weights and biases of the \code{\linkS4class{RBM}}
+#' object.
 #' 
-#' @param rbm A instance of the class \code{\link{RBM}}.
-#' @usage resetRBM(rbm)
+#' @param rbm An instance of class \code{\linkS4class{RBM}}.
+#' @param ... Additional arguments.
 #' 
-#' @seealso \code{\link{RBM}}
-#' 
-#' @include rbm.R
-#' @include rbm.Setter.R
-#' 
-#' @export
-#' @docType methods
-#' @rdname resetRBM-methods
+#' @seealso \code{\linkS4class{RBM}}
+#' @keywords internal
+#' @include rbm.Class.R
 setGeneric(
-  name="resetRBM",
-  def=function(rbm){standardGeneric("resetRBM")}
+  name = "resetRBM",
+  def = function(rbm, ...){standardGeneric("resetRBM")}
 )
 
-#' @rdname resetRBM-methods
-#' @aliases resetRBM,RBM-method
 setMethod(
-  f="resetRBM",
-  signature="RBM",
-  definition=function(rbm){
-    numVisible <- getNumVisible(rbm)
-    numHidden <- getNumHidden(rbm)
+  f = "resetRBM",
+  signature = "RBM",
+  definition = function(rbm, ...)
+  {
+    numVisible <- getParameter(".numVisible", net = rbm)
+    numHidden <- getParameter(".numHidden", net = rbm)
+    genWeightFunction <- getParameter(".generateWeightsFunction", net = rbm)
     
-    setWeights(rbm) <- getGenWeightFunction(rbm)(numVisible,numHidden) 
-    setHiddenBiases(rbm) <- matrix(0,1,numHidden)
-    setVisibleBiases(rbm) <- matrix(0,1,numVisible)
+    rbm@weights <- genWeightFunction(numVisible, numHidden, ..., net = rbm)
+    rbm@hiddenBiases <- genWeightFunction(1, numHidden, ..., net = rbm)
+    rbm@visibleBiases <- genWeightFunction(1, numVisible, ..., net = rbm)
     
-    setWeightInc(rbm) <- matrix(0,numVisible,numHidden)
-    setHiddenBiasesInc(rbm) <- matrix(0,1,numHidden)
-    setVisibleBiasesInc(rbm) <- matrix(0,1,numVisible)
+    rbm@weightsInc <- matrix(0, numVisible, numHidden)
+    rbm@hiddenBiasesInc <- matrix(0, 1, numHidden)
+    rbm@visibleBiasesInc <- matrix(0, 1, numVisible)
     rbm@stats <- list()
     
-    return(rbm)
+    rbm
   }
 )

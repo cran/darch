@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -60,22 +61,21 @@
 #' partial derivatives
 #' @param length Maximum number of line searches or maximum allowed number of 
 #' function evaluations if negative
-#' @param ... Additional Parameters for the function f
-#' @usage minimize( X, f, length, ...)
+#' @param red Expected reduction in function value in the first search.
+#' @param dims Parameter to the function f.
+#' @param data Parameter to the function f.
+#' @param target Parameter to the function f.
+#' @param epochSwitch Parameter to the function f.
+#' @param matMult Matrix multiplication function.
 #' @return The function returns the found solution "X", a vector of function 
 #' values "fX" indicating the progress made and "i" the number of iterations 
 #' (line searches or function evaluations, depending on the sign of "length") 
 #' used.
 #' 
-#' @seealso \code{\link{DArch}},
-#' \code{\link{minimizeAutoencoder}},
-#' \code{\link{minimizeClassifier}}
-#' 
-#' @docType methods
-#' @rdname minimize
-#' @export
-minimize <-function( X, f, length, ...) {
-  matMult <- get("matMult", darch.env)
+#' @seealso \code{\link{minimizeAutoencoder}}, \code{\link{minimizeClassifier}}
+#' @keywords internal
+minimize <- function(X, f, length, red, dims, data, target, epochSwitch, matMult)
+{
   # Minimize a differentiable multivariate function. 
   #
   # Usage: [X, fX, i] <- minimize(X, f, length, P1, P2, P3, ... )
@@ -121,7 +121,7 @@ minimize <-function( X, f, length, ...) {
   # SIG to low (positive) values forces higher precision in the line-searches.
   # RHO is the minimum allowed fraction of the expected (from the slope at the
   # initial point in the linesearch). Constants must satisfy 0 < RHO < SIG < 1.
-  # Tuning of SIG (dep   } #ing on the nature of the function to be optimized) may
+  # Tuning of SIG (depending on the nature of the function to be optimized) may
   # speed up the minimization it is probably not worth playing much with RHO.
   
   # The code falls naturally into 3 parts, after the initial line search is
@@ -140,43 +140,43 @@ minimize <-function( X, f, length, ...) {
   # gracefully.
   
   if(length(length) == 2){
-    red<-length[2] 
-    length<-length[1]
+    red <- length[2] 
+    length <- length[1]
   }else{ 
-    red<-1
+    red <- 1
   }
   
-  if(length>0){
-    S<-'Linesearch'
-  }else{
-    S<-'Function evaluation'    
-  } 
+  #if(length>0){
+  #  S<-'Linesearch'
+  #}else{
+  #  S<-'Function evaluation'    
+  #} 
   
   i <- 0                                            # zero the run length counter
   ls.failed <- 0                             # no previous line search has failed
-  ret <- f( X, ...)          # get function value and gradient
+  ret <- f( X, dims, data, target, epochSwitch)          # get function value and gradient
   f0 <- if(!is.nan(ret[1])) ret[1] else Inf
   df0 <- ret[2:length(ret)]
   fX <- f0
-  i <- i + (length<0)                                            # count epochs?!
+  i <- i + (length < 0)                                            # count epochs?!
   s <- -df0
   d0 <- matMult(t(-s), s)     # initial search direction (steepest) and slope
-  x3 <- red/(1-d0)                                  # initial step is red/(|s|+1)
+  x3 <- red/(1 - d0)                                  # initial step is red/(|s|+1)
   
-  while(i < abs(length)){                                      # while not finished
-    i <- i + (length>0)                                      # count iterations?!
+  while (i < abs(length)) {                                      # while not finished
+    i <- i + (length > 0)                                      # count iterations?!
     
     X0 <- X 
     F0 <- f0 
     dF0 <- df0 # make a copy of current values
     
-    if (length>0){
+    if (length > 0) {
       M <- MAX
     }else{
-      M <- min(MAX, -length-i) 
+      M <- min(MAX, -length - i) 
     }
     
-    while(1){                             # keep extrapolating as long as necessary
+    while (1) {                             # keep extrapolating as long as necessary
       x2 <- 0 
       f2 <- f0 
       d2 <- d0 
@@ -187,7 +187,7 @@ minimize <-function( X, f, length, ...) {
       while(!success && M > 0){
         M <- M - 1 
         i <- i + (length<0)                         # count epochs?!
-        ret <- f(X+x3*s, ...)
+        ret <- f(X+x3*s, dims, data, target, epochSwitch)
         f3 <- if(!is.nan(ret[1])) ret[1] else Inf
         df3 <- ret[2:length(ret)]
         
@@ -259,7 +259,7 @@ minimize <-function( X, f, length, ...) {
       }
       
       x3 <- max(min(x3, x4-INT*(x4-x2)),x2+INT*(x4-x2))  # don't accept too close
-      ret <- f(X+x3*s, ...)
+      ret <- f(X+x3*s, dims, data, target, epochSwitch)
       f3 <- ret[1]
       df3 <- ret[2:length(ret)]
 

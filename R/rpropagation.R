@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -22,6 +23,11 @@
 #' For details of the resilient backpropagation algorithm see the references.
 #' 
 #' @details
+#' 
+#' RPROP supports dropout and uses the weight update function as
+#' defined via the \code{darch.weightUpdateFunction} parameter of
+#' \code{\link{darch}}.
+#' 
 #' The code for the calculation of the weight change is a translation from the
 #' MATLAB code from the Rprop Optimization Toolbox implemented by R. Calandra 
 #' (see References).
@@ -51,25 +57,42 @@
 #' @param darch The deep architecture to train
 #' @param trainData The training data
 #' @param targetData The expected output for the training data
-#' @param method The method for the training. Default is "iRprop+"
-#' @param decFact Decreasing factor for the training. Default is \code{0.5}.
-#' @param incFact Increasing factor for the training Default is \code{1.2}.
-#' @param weightDecay Weight decay for the training. Default is \code{0}
-#' @param initDelta Initialisation value for the update. Default is \code{0.0125}.
-#' @param minDelta Lower bound for step size. Default is \code{0.000001}
-#' @param maxDelta Upper bound for step size. Default is \code{50}
+#' @param rprop.method The method for the training. Default is "iRprop+"
+#' @param rprop.decFact Decreasing factor for the training. Default is \code{0.6}.
+#' @param rprop.incFact Increasing factor for the training Default is \code{1.2}.
+#' @param rprop.initDelta Initialisation value for the update. Default is \code{0.0125}.
+#' @param rprop.minDelta Lower bound for step size. Default is \code{0.000001}
+#' @param rprop.maxDelta Upper bound for step size. Default is \code{50}
+#' @param nesterovMomentum See \code{darch.nesterovMomentum} parameter of
+#'   \code{\link{darch}}.
+#' @param dropout See \code{darch.dropout} parameter of
+#'   \code{\link{darch}}.
+#' @param dropConnect See \code{darch.dropout.dropConnect} parameter of
+#'   \code{\link{darch}}.
+#' @param errorFunction See \code{darch.errorFunction} parameter of
+#'   \code{\link{darch}}.
+#' @param matMult Matrix multiplication function, internal parameter.
+#' @param debugMode Whether debug mode is enabled, internal parameter.
 #' @param ... Further parameters.
 #' 
 #' @return \linkS4class{DArch} - The trained deep architecture
-#' 
+#' @examples
+#' \dontrun{
+#' data(iris)
+#' model <- darch(Species ~ ., iris, darch.fineTuneFunction = "rpropagation",
+#'  preProc.params = list(method = c("center", "scale")),
+#'  darch.unitFunction = c("softplusUnit", "softmaxUnit"),
+#'  rprop.method = "iRprop+", rprop.decFact = .5, rprop.incFact = 1.2,
+#'  rprop.initDelta = 1/100, rprop.minDelta = 1/1000000, rprop.maxDelta = 50)
+#' }
 #' @details
-#' The possible training methods (parameter \code{method}) are the following 
-#' (see References for details):
+#' The possible training methods (parameter \code{rprop.method}) are the
+#' following  (see References for details):
 #' \tabular{ll}{
 #' Rprop+: \tab Rprop with Weight-Backtracking\cr
 #' Rprop-: \tab Rprop without Weight-Backtracking\cr
 #' iRprop+: \tab Improved Rprop with Weight-Backtracking\cr
-#' iRprop-: \tab Improved Rprop with Weight-Backtracking\cr
+#' iRprop-: \tab Improved Rprop without Weight-Backtracking\cr
 #' } 
 #'
 #' @references
@@ -86,136 +109,223 @@
 #' Artificial Intelligence 2, S. 1137-1143, Morgan Kaufmann, Morgan Kaufmann 
 #' Publishers Inc., San Francisco, CA, USA, 1995.
 #' 
-#' @seealso \code{\link{DArch}}
+#' @seealso \code{\link{darch}}
 #' @family fine-tuning functions
 #' @export
-rpropagation <- function(darch, trainData, targetData, method="iRprop+",
-                         decFact=0.5, incFact=1.2, weightDecay=0,
-                         initDelta=0.0125, minDelta=0.000001, maxDelta=50, ...){
-  matMult <- get("matMult", darch.env)
-  numLayers <- length(getLayers(darch))
+rpropagation <- function(darch, trainData, targetData,
+  rprop.method=getParameter(".rprop.method"),
+  rprop.decFact=getParameter(".rprop.decFact"),
+  rprop.incFact=getParameter(".rprop.incFact"),
+  rprop.initDelta=getParameter(".rprop.initDelta"),
+  rprop.minDelta=getParameter(".rprop.minDelta"),
+  rprop.maxDelta=getParameter(".rprop.maxDelta"),
+  nesterovMomentum = getParameter(".darch.nesterovMomentum"),
+  dropout = getParameter(".darch.dropout"),
+  dropConnect = getParameter(".darch.dropout.dropConnect"),
+  errorFunction = getParameter(".darch.errorFunction"),
+  matMult = getParameter(".matMult"),
+  debugMode = getParameter(".debug", F, darch), ...)
+{
+  # Print fine-tuning configuration on first run
+  # TODO more details on the configuration
+  if (!getParameter(".rprop.init", F, darch))
+  {
+    darch@parameters[[".rprop.init"]] <- T
+  }
+  
+  layers <- darch@layers
+  numLayers <- length(layers)
   delta <- list()
   gradients <- list()
   outputs <- list()
   derivatives <- list()
-  stats <- getStats(darch)
+  momentum <- getMomentum(darch)
+  
+  dropoutInput <- dropout[1]
   
   # 1. Forwardpropagate
-  data <- applyDropoutMask(trainData, getDropoutMask(darch, 0))
-  numRows <- dim(data)[1]
+  if (dropoutInput > 0)
+  {
+    trainData <- applyDropoutMaskCpp(trainData, getDropoutMask(darch, 0))
+  }
+  
+  data <- trainData
+  numRows <- nrow(data)
+  numRowsWeights <- vector(mode = "numeric", length = numLayers)
+  weights <- vector(mode = "list", length = numLayers)
   for(i in 1:numLayers){
     data <- cbind(data,rep(1,numRows))
-    weights <- getLayerWeights(darch,i)
-    func <- getLayerFunction(darch,i)
+    numRowsWeights[i] <- nrow(layers[[i]][["weights"]])
+    numColsWeights <- ncol(layers[[i]][["weights"]])
     
-    # apply dropout masks to weights, unless we're on the last layer; this is
-    # done to allow activation functions to avoid considering values that are
-    # later going to be dropped
-    if (i < numLayers)
+    # Initialize rprop layer variables
+    if (is.null(layers[[i]][["rprop.init"]]))
     {
-      weights <- applyDropoutMask(weights, getDropoutMask(darch, i))
+      layers[[i]][["rprop.init"]] <- T
+      layers[[i]][["rprop.gradients"]] <-
+        matrix(0, numRowsWeights[i], numColsWeights) # old gradients
+      layers[[i]][["rprop.delta"]] <-
+        matrix(rprop.initDelta, numRowsWeights[i], numColsWeights) # old deltas
+      layers[[i]][["rprop.inc"]] <-
+        matrix(0, numRowsWeights[i], numColsWeights) # momentum terms
     }
     
-    ret <- func(data, weights)
-    
-    # apply dropout masks to output, unless we're on the last layer
-    if (i < numLayers)
+    if (nesterovMomentum)
     {
-      ret[[1]] <- applyDropoutMask(ret[[1]], getDropoutMask(darch, i))
-      ret[[2]] <- applyDropoutMask(ret[[2]], getDropoutMask(darch, i))
+      weights[[i]] <-
+        layers[[i]][["weights"]] + layers[[i]][["rprop.inc"]] * momentum
+    }
+    else
+    {
+      weights[[i]] <- layers[[i]][["weights"]]
+    }
+    
+    func <- layers[[i]][["unitFunction"]]
+    
+    # apply dropout masks to weights and / or outputs
+    # TODO extract method
+    if ((i < numLayers || dropConnect) && dropout[i + 1] > 0)
+    {
+      dropoutMask <- getDropoutMask(darch, i)
+      
+      if (dropConnect)
+      {
+        weights[[i]] <- applyDropoutMaskCpp(weights[[i]], dropoutMask)
+        
+        ret <- func(matMult(data, weights[[i]]), net = darch,
+                    dropoutMask = dropoutMask)
+      }
+      else
+      {
+        ret <- func(matMult(data, weights[[i]]), net = darch,
+                    dropoutMask = dropoutMask)
+        
+        ret[[1]] <- applyDropoutMaskCpp(ret[[1]], dropoutMask)
+        ret[[2]] <- applyDropoutMaskCpp(ret[[2]], dropoutMask)
+      }
+    }
+    else
+    {
+      ret <- func(matMult(data, weights[[i]]), net = darch)
     }
     
     outputs[[i]] <- ret[[1]]
     data <- ret[[1]]
     derivatives[[i]] <- ret[[2]]
+    
+    if (debugMode)
+    {
+      futile.logger::flog.debug("Layer %s: Activation standard deviation: %s",
+                                i, sd(data))
+      futile.logger::flog.debug("Layer %s: Derivatives standard deviation: %s",
+                                i, sd(derivatives[[i]]))
+    }
   }
-  rm(data,numRows,func,ret)
+  #rm(data,numRows,func,ret)
   
   # 2. Calculate the Error on the network output
-  output <- cbind(outputs[[numLayers-1]][],rep(1,dim(outputs[[numLayers-1]])[1]))
-  error <- (targetData - outputs[[numLayers]][])
+  output <- cbind(outputs[[numLayers-1]],rep(1,dim(outputs[[numLayers-1]])[1]))
+  error <- (targetData - outputs[[numLayers]])
   delta[[numLayers]] <- error * derivatives[[numLayers]]
   gradients[[numLayers]] <- t(matMult(-t(delta[[numLayers]]), output))
   
-  errOut <- getErrorFunction(darch)(targetData,outputs[[numLayers]][])
+  errOut <- errorFunction(targetData, outputs[[numLayers]])
   #flog.debug(paste("Pre-Batch",errOut[[1]],errOut[[2]]))
   newE <- errOut[[2]]
-  oldE <- if (is.null(stats[["oldE"]])) Inf else stats[["oldE"]]
-  stats[["oldE"]] <- newE
+  oldE <- if (is.null(layers[[1]][["rprop.oldE"]])) .Machine$double.xmax
+    else layers[[1]][["rprop.oldE"]]
+  layers[[1]][["rprop.oldE"]] <- newE
   
   # 4. Backpropagate the error
-  for(i in (numLayers-1):1){
+  for (i in (numLayers - 1):1)
+  {
+    weights[[i+1]] <- weights[[i+1]][1:(nrow(weights[[i+1]]) - 1),, drop = F]
     
-    weights <- getLayerWeights(darch,i+1)
-    weights <- weights[1:(nrow(weights) - 1),, drop = F]
     
-    if (i > 1){
-      output <- cbind(outputs[[i-1]][],rep(1,dim(outputs[[i-1]])[1]))
-    }else{
-      output <- cbind(trainData,rep(1,dim(trainData)[1]))
-    }
+    output <- (if (i > 1) cbind(outputs[[i-1]],rep(1,dim(outputs[[i-1]])[1]))
+               else cbind(trainData,rep(1,dim(trainData)[1])))
     
-    error <-  matMult(delta[[i+1]], t(weights))
+    error <-  matMult(delta[[i + 1]], t(weights[[i + 1]]))
     delta[[i]] <- error * derivatives[[i]]
     gradients[[i]] <- -t(matMult(t(delta[[i]]), output))
   }
-  rm(delta,error,output)
+  #rm(delta,error,output)
   
   
   # 5.  Update the weights
-  for(i in 1:numLayers){
-    weights <- getLayerWeights(darch,i)
+  for (i in 1:numLayers)
+  {    
+    oldGradient <- layers[[i]][["rprop.gradients"]]
+    delta <-  layers[[i]][["rprop.delta"]]
+    deltaW <- layers[[i]][["rprop.inc"]]
+    inc <- momentum * deltaW
     
-    #gradients[[i]] <- gradients[[i]] + weightDecay*weights
+    gg <- gradients[[i]] * oldGradient
+    #maxD <- matrix(rprop.maxDelta, nrow(oldDelta), ncol(oldDelta))
+    #minD <- matrix(rprop.minDelta, nrow(oldDelta), ncol(oldDelta))
+    #delta <- (pmin(oldDelta * rprop.incFact, maxD) * (gg > 0) +
+    #  pmax(oldDelta * rprop.decFact, minD) * (gg < 0) +
+    #  oldDelta * (gg == 0))
+    #  
+    rpropDeltaCpp(gg, delta, rprop.incFact, rprop.decFact, rprop.minDelta,
+      rprop.maxDelta)
     
-    if (length(getLayer(darch,i)) < 3){
-      setLayerField(darch,i,3) <- matrix(0,nrow(gradients[[i]]),ncol(gradients[[i]])) # old gradients
-      setLayerField(darch,i,4) <- matrix(initDelta,nrow(weights),ncol(weights)) # old deltas
-      setLayerField(darch,i,5) <- matrix(0,nrow(weights),ncol(weights)) # old deltaWs
+    if (rprop.method == "Rprop+")
+    {
+      deltaW <- -sign(gradients[[i]]) * delta * (gg >= 0) - deltaW * (gg < 0)
+      
+      rpropGradientsCpp(gg, gradients[[i]])
     }
     
-    oldGradient <- getLayerField(darch,i,3)
-    oldDelta <-  getLayerField(darch,i,4)
-    oldDeltaW <- getLayerField(darch,i,5)
-    
-    gg <- gradients[[i]]*oldGradient
-    maxD <- matrix(maxDelta,nrow(oldDelta),ncol(oldDelta))
-    minD <- matrix(minDelta,nrow(oldDelta),ncol(oldDelta))
-    delta <- pmin(oldDelta*incFact,maxD)*(gg>0) + 
-      pmax(oldDelta*decFact,minD)*(gg<0) + 
-      oldDelta*(gg==0)
-    
-    if (method == "Rprop+"){
-      deltaW <- -sign(gradients[[i]])*delta*(gg>=0) - oldDeltaW*(gg<0)
-      gradients[[i]] <- gradients[[i]]*(gg>=0)
+    else if (rprop.method == "Rprop-")
+    {
+      deltaW <- -sign(gradients[[i]]) * delta
     }
     
-    if (method == "Rprop-"){
-      deltaW <- -sign(gradients[[i]])*delta
+    else if (rprop.method == "iRprop+")
+    {
+      rpropDeltaWiRpropPlus(gg, deltaW, gradients[[i]], delta, newE, oldE)
+      
+      rpropGradientsCpp(gg, gradients[[i]])
     }
     
-    if (method == "iRprop+"){
-      deltaW <- -sign(gradients[[i]])*delta*(gg>=0) - oldDeltaW*(gg<0)*(newE>oldE)
-      gradients[[i]] <- gradients[[i]]*(gg>=0)
+    else if (rprop.method == "iRprop-")
+    {
+      deltaW <- -sign(gradients[[i]]) * delta
+      rpropGradientsCpp(gg, gradients[[i]]) # TODO order?
     }
     
-    if (method == "iRprop-"){
-      gradients[[i]] <- gradients[[i]]*(gg>=0)
-      deltaW <- -sign(gradients[[i]])*delta
+    else
+    {
+      futile.logger::flog.error("Unknown RPROP method '%s'", rprop.method)
     }
     
-    biases <- weights[nrow(weights),, drop = F]
-    weights <- weights[1:(nrow(weights)-1),, drop = F]
+    inc <- inc + deltaW
     
-    weights <- weights * (1 - weightDecay) + (deltaW[1:(nrow(deltaW)-1),] + (getMomentum(darch) * oldDeltaW[1:(nrow(deltaW)-1),])) * getDropoutMask(darch, i-1)
-    biases <- biases * (1 - weightDecay) + deltaW[nrow(deltaW),]
-    setLayerWeights(darch,i) <- rbind(weights,biases)
+    if (debugMode)
+    {
+      futile.logger::flog.debug("Layer %s: Weight change ratio: %s",
+        i, norm(inc) / norm(layers[[i]][["weights"]]))
+    }
     
-    setLayerField(darch,i,3) <- gradients[[i]]
-    setLayerField(darch,i,4) <- delta
-    setLayerField(darch,i,5) <- deltaW
+    layers[[i]][["weights"]] <-
+      (darch@layers[[i]][["weightUpdateFunction"]](darch, i,
+      inc[1:(nrow(inc) - 1),, drop = F], inc[nrow(inc),]))
+    
+    layers[[i]][["rprop.gradients"]] <- gradients[[i]]
+    #layers[[i]][["rprop.delta"]] <- delta
+    layers[[i]][["rprop.inc"]] <- inc
   }
   
-  setStats(darch) <- stats
-  return(darch)
+  darch@layers <- layers
+  darch
+}
+
+printDarchParams.rpropagation <- function(darch, lf = futile.logger::flog.info)
+{
+  lf("[RPROP] Using rpropagation for fine-tuning")
+  printParams(c("rprop.method", "rprop.decFact",
+              "rprop.incFact", "rprop.initDelta", "rprop.minDelta",
+              "rprop.maxDelta"), "RPROP")
+  lf("[RPROP] See ?rpropagation for documentation")
 }

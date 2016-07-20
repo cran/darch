@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -15,6 +16,9 @@
 # You should have received a copy of the GNU General Public License
 # along with darch. If not, see <http://www.gnu.org/licenses/>.
 
+#' @include darch.Class.R
+NULL
+
 #' Dropout mask generator function.
 #'
 #' This function generates droput masks as a vector of given length, according
@@ -24,51 +28,29 @@
 #' @param dropoutRate The dropout rate (i.e. percentage of zeros in the mask)
 #' @return Matrix containing the dropout mask
 #'
-#' @seealso \code{\link{DArch}}
+#' @keywords internal
 generateDropoutMask <- function(length, dropoutRate)
 {
-  if (dropoutRate == 0)
-  {
-    ret <- rep(1, length)
-  }
-  else
-  {
-    ret <- sample(0:1, length, replace = T,
-                  prob = c(dropoutRate, 1 - dropoutRate))
-  }
-  
-  return (ret)
+  sample(0:1, length, replace = T,
+    prob = c(dropoutRate, 1 - dropoutRate))
 }
 
 generateDropoutMasksForDarch <- function(darch)
 {
-  dropoutMasks <- list()
-  numLayers <- length(getLayers(darch))
+  numLayers <- length(darch@layers)
+  dropConnect <- getParameter(".darch.dropout.dropConnect")
+  dropout <- getParameter(".darch.dropout")
   
   # generate dropout masks
   setDropoutMask(darch, 0) <-
-                  generateDropoutMask(nrow(getLayerWeights(darch, 1)[]) - 1,
-                                      darch@dropoutInput)
-  for (i in 1:(numLayers - 1))
+    generateDropoutMask(nrow(darch@layers[[1]][["weights"]]) - 1, dropout[1])
+  for (i in 1:(numLayers - !dropConnect))
   {
+    weights <- darch@layers[[i + !dropConnect]][["weights"]]
+    length <- if (dropConnect) length(weights) else nrow(weights) - 1
     setDropoutMask(darch, i) <-
-                    generateDropoutMask(nrow(getLayerWeights(darch, i+1)[])-1,
-                                        darch@dropoutHidden)
+      generateDropoutMask(length, dropout[i + 1])
   }
   
-  return (darch)
-}
-
-#' Applies the given dropout mask to the given data row-wise.
-#' 
-#' This function multiplies each row with the dropout mask. To apply the dropout
-#' mask by row, it can simply be multiplied with the data matrix. This does not
-#' work of the mask is to be applied row-wise, hence this function.
-#' 
-#' @param data Data to which the dropout mask should be applied
-#' @param mask The dropout mask, a vector of 0 and 1.
-#' @return Data with applied dropout mask
-applyDropoutMask <- function(data, mask)
-{
-  return (data * matrix(rep(mask, nrow(data)), nrow=nrow(data), byrow=T))
+  darch
 }

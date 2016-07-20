@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -15,6 +16,8 @@
 # You should have received a copy of the GNU General Public License
 # along with darch. If not, see <http://www.gnu.org/licenses/>.
 
+# TODO replace with something simpler / more efficient
+
 #' Makes start- and end-points for the batches.
 #' 
 #' The start- and end-points are used for dividing the data into batches. 
@@ -27,22 +30,18 @@
 #' 
 #' @param batchSize Desired batch size
 #' @param numRows Number of rows of the data
-#' 
-#' @seealso \code{\link{Net}}
-#' 
-#' @export
-#' @docType methods
-#' @rdname makeStartEndPoints
-#' @include net.R
-makeStartEndPoints <- function(batchSize,numRows){
-    numBatches <- ceiling(numRows/batchSize)
-    batchValues <- list()
-    batchValues[[1]] <- 0
-    for(n in 2:(numBatches)){
-      batchValues[[n]] <- (n-1)*batchSize 
-    }
-    
-    batchValues[[length(batchValues)+1]] <- numRows
-    
-    return(list(batchValues,numBatches))
+#' @keywords internal
+makeStartEndPoints <- function(batchSize,numRows)
+{
+  numBatches <- ceiling(numRows / batchSize)
+  batchValues <- list()
+  batchValues[[1]] <- 0
+  for(n in 2:(numBatches))
+  {
+    batchValues[[n]] <- (n - 1) * batchSize 
   }
+  
+  batchValues[[length(batchValues) + 1]] <- numRows
+  
+  return(list(batchValues, numBatches))
+}

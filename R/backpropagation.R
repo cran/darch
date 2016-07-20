@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -15,133 +16,219 @@
 # You should have received a copy of the GNU General Public License
 # along with darch. If not, see <http://www.gnu.org/licenses/>.
 
-#' @include darch.R
+#' @include darch.Class.R
 NULL
 
 #' Backpropagation learning function
-#' 
+#'
 #' This function provides the backpropagation algorithm for deep architectures.
-#' 
-#' The function is getting the learning parameters from the provided
-#' \code{\linkS4class{DArch}} object. It uses the attributes \code{momentum},
-#' \code{finalMomentum} and \code{momentumSwitch} for the calculation of the new
-#' weights with momentum. The attributes \code{learnRateWeights} and
-#' \code{learnRateBiases} will be used for updating the weights. To use the
-#' backpropagation function as the fine tuning function the layer functions of
-#' the darch \code{\linkS4class{DArch}} object must set to the versions which
-#' calculates also the derivatives of the function result.
-#' 
+#'
+#' The only backpropagation-specific, user-relevant parameters are
+#' \code{bp.learnRate} and \code{bp.learnRateScale}; they can be passed to the
+#' \code{\link{darch}} function when enabling \code{backpropagation} as the
+#' fine-tuning function. \code{bp.learnRate} defines the backpropagation
+#' learning rate and can either be specified as a single scalar or as a vector
+#' with one entry for each weight matrix, allowing for per-layer learning rates.
+#' \code{bp.learnRateScale} is a single scalar which contains a scaling factor
+#' for the learning rate(s) which will be applied after each epoch.
+#'
+#' Backpropagation supports dropout and uses the weight update function as
+#' defined via the \code{darch.weightUpdateFunction} parameter of
+#' \code{\link{darch}}.
+#'
 #' @param darch An instance of the class \code{\linkS4class{DArch}}.
-#' @param trainData The data for training.
-#' @param targetData The targets for the data.
+#' @param trainData The training data (inputs).
+#' @param targetData The target data (outputs).
+#' @param bp.learnRate Learning rates for backpropagation, length is either one
+#'   or the same as the number of weight matrices when using different learning
+#'   rates for each layer.
+#' @param bp.learnRateScale The learn rate is multiplied by this value after
+#'   each epoch.
+#' @param nesterovMomentum See \code{darch.nesterovMomentum} parameter of
+#'   \code{\link{darch}}.
+#' @param dropout See \code{darch.dropout} parameter of \code{\link{darch}}.
+#' @param dropConnect See \code{darch.dropout.dropConnect} parameter of
+#'   \code{\link{darch}}.
+#' @param matMult Matrix multiplication function, internal parameter.
+#' @param debugMode Whether debug mode is enabled, internal parameter.
 #' @param ... Further parameters.
 #' @return The trained deep architecture
-#' 
-#' @seealso \code{\linkS4class{DArch}}, \code{\link{rpropagation}},
-#'   \code{\link{minimizeAutoencoder}} \code{\link{minimizeClassifier}}
-#'   \code{\link{minimizeClassifier}}
-#' 
-#' @references Rumelhart, D., G. E. Hinton, R. J. Williams, Learning
-#'   representations by backpropagating errors, Nature 323, S. 533-536, DOI:
+#' @examples
+#' \dontrun{
+#' data(iris)
+#' model <- darch(Species ~ ., iris, darch.fineTuneFunction = "backpropagation")
+#' }
+#' @seealso \code{\link{darch}}
+#'   
+#' @references Rumelhart, D., G. E. Hinton, R. J. Williams, Learning 
+#'   representations by backpropagating errors, Nature 323, S. 533-536, DOI: 
 #'   10.1038/323533a0, 1986.
-#' 
+#'   
 #' @family fine-tuning functions
 #' @export
-backpropagation <- function(darch, trainData, targetData, ...)
+backpropagation <- function(darch, trainData, targetData,
+  bp.learnRate = getParameter(".bp.learnRate",
+    rep(1, times = length(darch@layers))),
+  bp.learnRateScale = getParameter(".bp.learnRateScale"),
+  nesterovMomentum = getParameter(".darch.nesterovMomentum"),
+  dropout = getParameter(".darch.dropout",
+    rep(0, times = length(darch@layers) + 1), darch),
+  dropConnect = getParameter(".darch.dropout.dropConnect"),
+  matMult = getParameter(".matMult"),
+  debugMode = getParameter(".debug", F), ...)
 {
-  matMult <- get("matMult", darch.env)
-  layers <- getLayers(darch)
+  layers <- darch@layers
   numLayers <- length(layers)
   delta <- list()
   outputs <- list()
   derivatives <- list()
-  stats <- getStats(darch)
+  
+  dropoutInput <- dropout[1]
+  
+  if (!getParameter(".bp.init", F, darch))
+  {
+    darch@parameters[[".bp.init"]] <- T
+  }
   
   # apply input dropout mask to data
-  # TODO same input dropout mask for all data in a batch?
-  trainData <- applyDropoutMask(trainData, getDropoutMask(darch, 0))
+  if (dropoutInput > 0)
+  {
+    trainData <- applyDropoutMaskCpp(trainData, getDropoutMask(darch, 0))
+  }
+  
+  momentum <- getMomentum(darch)
   
   # 1. Forwardpropagate
   data <- trainData
-  numRows <- dim(data)[1]
-  for (i in 1:numLayers){
-    data <- cbind(data,rep(1,numRows))
-    func <- getLayerFunction(darch, i)
-    weights <- getLayerWeights(darch, i)
+  numRows <- nrow(data)
+  weights <- vector(mode = "list", length = numLayers)
+  numRowsWeights <- vector(mode = "numeric", length = numLayers)
+  
+  for (i in 1:numLayers)
+  {
+    numRowsWeights[i] <- nrow(layers[[i]][["weights"]])
     
-    # apply dropout masks to weights, unless we're on the last layer; this is
-    # done to allow activation functions to avoid considering values that are
-    # later going to be dropped
-    if (i < numLayers)
+    # Initialize backprop layer variables
+    numColsWeights <- ncol(layers[[i]][["weights"]])
+    if (is.null(layers[[i]][["bp.init"]]))
     {
-      weights <- applyDropoutMask(weights, getDropoutMask(darch, i))
+      layers[[i]][["bp.init"]] <- T
+      layers[[i]][["bp.weightsInc"]] <-
+        matrix(0, numRowsWeights[i] - 1, numColsWeights)
+      layers[[i]][["bp.biasesInc"]] <- matrix(0, 1, numColsWeights)
     }
     
-    ret <- func(data,weights)
+    data <- cbind(data,rep(1,numRows))
+    func <- layers[[i]][["unitFunction"]]
     
-    # apply dropout masks to output, unless we're on the last layer
-    if (i < numLayers)
+    # Nesterov accelerated gradient
+    if (nesterovMomentum)
     {
-      ret[[1]] <- applyDropoutMask(ret[[1]], getDropoutMask(darch, i))
-      ret[[2]] <- applyDropoutMask(ret[[2]], getDropoutMask(darch, i))
+      nesterov <-
+        rbind(layers[[i]][["bp.weightsInc"]], layers[[i]][["bp.biasesInc"]]) *
+        momentum
+      weights[[i]] <- layers[[i]][["weights"]] + nesterov
+    }
+    else
+    {
+      weights[[i]] <- layers[[i]][["weights"]]
+    }
+    
+    # apply dropout masks to weights and / or outputs
+    # TODO extract method
+    if ((i < numLayers || dropConnect) && dropout[i + 1] > 0)
+    {
+      dropoutMask <- getDropoutMask(darch, i)
+      
+      if (dropConnect)
+      {
+        weights[[i]] <- applyDropoutMaskCpp(weights[[i]], dropoutMask)
+        
+        ret <- func(matMult(data, weights[[i]]), net = darch,
+                    dropoutMask = dropoutMask)
+      }
+      else
+      {
+        ret <- func(matMult(data, weights[[i]]), net = darch,
+                    dropoutMask = dropoutMask)
+        
+        ret[[1]] <- applyDropoutMaskCpp(ret[[1]], dropoutMask)
+        ret[[2]] <- applyDropoutMaskCpp(ret[[2]], dropoutMask)
+      }
+    }
+    else
+    {
+      ret <- func(matMult(data, weights[[i]]), net = darch)
     }
     
     outputs[[i]] <- ret[[1]]
     data <- ret[[1]]
     derivatives[[i]] <- ret[[2]]
-  }
-  rm(data,numRows)
-
-  # 2. Calculate the Error on the network output
-  # TODO if we use dropout in the output layer, multiply dropout mask in here
-  error <- (targetData - outputs[[numLayers]][])
-  delta[[numLayers]] <- error * derivatives[[numLayers]]
-
-  E <- getErrorFunction(darch)(targetData,outputs[[numLayers]][])
-  #flog.debug(paste("Error",E[[1]],E[[2]]))
-
-  # 4. Backpropagate the error
-  for(i in (numLayers-1):1){
-	  weights <- layers[[i+1]][[1]][]
-    # remove bias row
-	  weights <- weights[1:(nrow(weights)-1),,drop=F]
     
-	  error <-  matMult(delta[[i+1]], t(weights))
-	  delta[[i]] <- error * derivatives[[i]]
+    if (debugMode)
+    {
+      futile.logger::flog.debug("Layer %s: Activation standard deviation: %s",
+                                i, sd(data))
+      futile.logger::flog.debug("Layer %s: Derivatives standard deviation: %s",
+                                i, sd(derivatives[[i]]))
+    }
   }
+  #rm(data,numRows)
+  
+  error <- (targetData - outputs[[numLayers]])
+  delta[[numLayers]] <- error * derivatives[[numLayers]]
+  
+  weights[[1]] <- weights[[1]][1:(numRowsWeights[1] - 1),, drop=F]
+  # 4. Backpropagate the error
+  # TODO i in numLayers:2?
+  for (i in (numLayers - 1):1) {
+    # remove bias row
+    weights[[i + 1]] <-
+      weights[[i + 1]][1:(numRowsWeights[i + 1] - 1),, drop = F]
+    
+    error <-  matMult(delta[[i + 1]], t(weights[[i + 1]]))
+    delta[[i]] <- error * derivatives[[i]]
+  }
+  
+  bp.learnRate <-
+    bp.learnRate * bp.learnRateScale ^ darch@epochs * (1 - momentum)
 
   # 5.  Update the weights
-  learnRateBiases <- getLearnRateBiases(darch)
-  learnRateWeights <- getLearnRateWeights(darch)
-  for(i in numLayers:1){
-    weights <- layers[[i]][[1]][]
-    biases <- weights[nrow(weights),,drop=F]
-    weights <- weights[1:(nrow(weights)-1),,drop=F]
-
-    # Check if the weightInc field in the layer list exists.
-    if (length(layers[[i]]) < 3){
-      layers[[i]][[3]] <- matrix(0,nrow(weights),ncol(weights))
-    }
-
-    if (i > 1){
-      output <- outputs[[i-1]]
-    }else{
-      output <- trainData
-    }
-
-    weightsInc <- t(learnRateWeights * matMult(t(delta[[i]]), output))
+  for (i in numLayers:1)
+  {
+    output <- if (i > 1) outputs[[i - 1]] else trainData
     
-    # apply dropout mask to momentum
-    weightsChange <- weightsInc + (getMomentum(darch) * layers[[i]][[3]][]
-      * getDropoutMask(darch, i-1))
-
-    weights <- weights + weightsChange
-    biasesInc <- learnRateBiases * (rowSums(t(delta[[i]])))
-    biases <- biases + biasesInc
-    setLayerWeights(darch,i) <- rbind(weights,biases)
-    setLayerField(darch,i,3) <- weightsInc
+    weightsInc <-
+      (t(bp.learnRate[i] * matMult(t(delta[[i]]), output)) / nrow(delta[[i]])
+      + momentum * layers[[i]][["bp.weightsInc"]])
+    biasesInc <-
+      (bp.learnRate[i] * (rowSums(t(delta[[i]]))) / nrow(delta[[i]])
+      + momentum * layers[[i]][["bp.biasesInc"]])
+    
+    if (debugMode)
+    {
+      futile.logger::flog.debug("Layer %s: Weight change ratio: %s",
+        i, norm(rbind(weightsInc, biasesInc)) / norm(layers[[i]][["weights"]]))
+      
+    }
+    
+    layers[[i]][["weights"]] <-
+      (layers[[i]][["weightUpdateFunction"]](darch, i, weightsInc,
+      biasesInc))
+    layers[[i]][["bp.weightsInc"]] <- weightsInc
+    layers[[i]][["bp.biasesInc"]] <- biasesInc
   }
 
-  setStats(darch) <- stats
-  return(darch)
+  darch@layers <- layers
+  darch
+}
+
+printDarchParams.backpropagation <- function(darch,
+  lf = futile.logger::flog.info)
+{
+  lf("[backprop] Using backpropagation for fine-tuning")
+  
+  printParams(c("bp.learnRate", "bp.learnRateScale"), "backprop")
+  
+  lf("[backprop] See ?backpropagation for documentation")
 }

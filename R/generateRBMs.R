@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -15,45 +16,54 @@
 # You should have received a copy of the GNU General Public License
 # along with darch. If not, see <http://www.gnu.org/licenses/>.
 
-#' Generates the RBMs for the pre-training.
-#' 
-#' Used the layer sizes from the DArch object to create the RBM objects for the
-#' pre-training. 
-#' 
-#' @param darch A instance of the class \code{\link{DArch}}.
-#' @param layers An array with the sizes of the layers
-#' @param genWeightFunc The function for generating the weight matrices
-#' @return The DArch object with the generated RBMs
-#' 
-#' @seealso \code{\link{DArch}}
-#'          \code{\link{RBM}}
-#' 
-#' @docType methods
-#' @rdname generateRBMs-methods
-#' @include darch.R
-#' @include rbm.R
-#' @export
 setGeneric(
-  name="generateRBMs",
-  def=function(darch,layers,genWeightFunc=generateWeights){standardGeneric("generateRBMs")}
+  name = "generateRBMs",
+  def = function(darch){standardGeneric("generateRBMs")}
 )
 
-#' @rdname generateRBMs-methods
-#' @aliases generateRBMs,DArch-method
+#' Generates the RBMs for the pre-training.
+#' 
+#' Used the layer sizes from the \code{\linkS4class{DArch}} object to create the
+#' RBM objects for the pre-training. 
+#' 
+#' @param darch An instance of the class \code{DArch} for which RBMs are
+#'   to be generated.
+#' @return The DArch object with the generated RBMs
+#' 
+#' @seealso \code{\linkS4class{DArch}}
+#'          \code{\linkS4class{RBM}}
+#' 
+#' @include darch.Class.R
+#' @include rbm.Class.R
+#' @keywords internal
 setMethod(
-  f="generateRBMs",
-  signature="DArch",
-  definition=function(darch,layers,genWeightFunc=generateWeights){
+  f = "generateRBMs",
+  signature = "DArch",
+  definition = function(darch)
+  {
     darch@rbmList <- list()
-    flog.info("Generating RBMs.")
-    for(i in 1:(length(layers)-1)){
+    layers <- getParameter(".layers")
+    futile.logger::flog.info("Generating RBMs.")
+    for (i in 1:(length(layers) - 1))
+    {
       # generate the RBMs
       visible <- layers[[i]]
-      hidden <- layers[[(i+1)]]
-      rbm <- newRBM(visible,hidden,getBatchSize(darch),getFF(darch),flog.logger()$threshold,genWeightFunc)
-      darch@rbmList[i] <- rbm
-      darch <- addLayer(darch,getWeights(rbm),getHiddenBiases(rbm),sigmoidUnitDerivative)				
+      hidden <- layers[[(i + 1)]]
+      futile.logger::flog.info(paste("Constructing new RBM instance with %s", 
+        "visible and %s hidden units."), visible, hidden)
+      rbm <- new("RBM")
+      rbm@parameters <- darch@parameters
+      rbm@parameters[[".numVisible"]] <- visible
+      rbm@parameters[[".numHidden"]] <- hidden
+      rbm@parameters[[".generateWeightsFunction"]] <-
+        getParameter(".generateWeightsFunction")[[i]]
+      rbm <- resetRBM(rbm)
+      darch@rbmList[[i]] <- rbm
+      darch <- addLayer(darch, rbm@weights, rbm@hiddenBiases,
+        getParameter(".darch.unitFunction")[[i]],
+        getParameter(".darch.weightUpdateFunction")[[i]])
     }
-    return(darch)
+    
+    darch
   }
 )

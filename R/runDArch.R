@@ -1,4 +1,5 @@
-# Copyright (C) 2013-2015 Martin Drees
+# Copyright (C) 2013-2016 Martin Drees
+# Copyright (C) 2015-2016 Johannes Rueckert
 #
 # This file is part of darch.
 #
@@ -15,46 +16,107 @@
 # You should have received a copy of the GNU General Public License
 # along with darch. If not, see <http://www.gnu.org/licenses/>.
 
-#' Execute the darch
+#' @include darch.Class.R
+NULL
+
+#' Forward-propagates data through the network
 #' 
-#' Runs the darch in a feed forward manner and saves the 
-#' generated outputs for every layer in the list
-#' \code{executeOutput} from the darch.
-#' To get the outputs call
+#' Runs the \code{DArch} in a feed-forward manner and returns the output.
 #' 
+#' Input and output layer can be chosen via the parameters \code{inputLayer}
+#' and \code{outputLayer}.
 #' 
-#' @param darch A instance of the class \code{\link{DArch}}.
-#' @param data The input data to execute the darch on. 
-#' @return The DArch object with the calculated outputs
+#' @param darch A instance of the class \code{\linkS4class{DArch}}.
+#' @param data The input data to execute the darch on.
+#' @param inputLayer Into which layer the given data is to be fed. Absolute
+#'   number starting at 1 for the input layer.
+#' @param outputLayer The output of which layer is to be returned, absolute
+#'   number starting a 0 for the input layer (i.e. pre-processed data is
+#'   returned).
+#' @param matMult Function to use for matrix multiplication.
+#' @return The network output
 #' 
-#' @seealso \code{\link{DArch}}
-#' 
-#' @docType methods
-#' @rdname runDArch
-#' @include darch.R
-#' @export
-runDArch <- function(darch,data){
-  darch <- resetExecOutput(darch)
-  layers <- getLayers(darch)
+#' @seealso \code{\link{darch}}
+#' @family darch execute functions
+#' @keywords internal
+runDArch <- function(darch, data, inputLayer = 1,
+  outputLayer = length(darch@layers),
+  matMult = getParameter(".matMult"))
+{
+  layers <- darch@layers
+  numRows <- nrow(data)
   
-  # If there's only one row of input data, convert vector to matrix
-  # TODO make sure that data is matrix before passing it to this function
-  if(is.null(dim(data))){
-    data <- t(as.matrix(data))
+  if (outputLayer == 0)
+  {
+    return(data)
   }
   
-  numRows <- dim(data)[1]
-  
-  for(i in 1:length(layers)){
-    dropoutWeightChange <- getLayerWeights(darch, i) * darch@dropoutHidden
+  for (i in inputLayer:outputLayer)
+  {
     data <- cbind(data,rep(1,numRows))
-    # temporarily change weights to account for dropout
-    setLayerWeights(darch, i) <- getLayerWeights(darch, i) - dropoutWeightChange
-    ret <- layers[[i]][[2]](data[],layers[[i]][[1]][])
-    setLayerWeights(darch, i) <- getLayerWeights(darch, i) + dropoutWeightChange
-    data <- ret[[1]]
-    darch <- addExecOutput(darch,data)
+    data <- layers[[i]][["unitFunction"]](matMult(data,
+      layers[[i]][["weights"]]), net = darch)[[1]]
   }
   
-  return(darch)
+  data
+}
+
+#' Forward-propagate data through the network with dropout inference
+#' 
+#' 
+#' If dropout was disabled, \code{\link{runDArch}} will be called instead.
+#' 
+#' @param dropout Dropout rates for the layers.
+#' @param iterations If greater than 0, the numbr of iterations to use for
+#'   moment matching dropout inference.
+#' @return The network output.
+#' 
+#' @inheritParams runDArch
+#' @seealso \code{\link{darch}}
+#' @family darch execute functions
+#' @keywords internal
+runDArchDropout <- function(darch, data, inputLayer = 1,
+  outputLayer = length(darch@layers), matMult = getParameter(".matMult"),
+  dropout = getParameter(".darch.dropout"),
+  iterations = getParameter(".darch.dropout.momentMatching"))
+{
+  layers <- darch@layers
+  numRows <- nrow(data)
+  # In case DropConnect is disabled, we append 0 for the last layer
+  dropout <- c(dropout, 0)
+  
+  if (outputLayer == 0)
+  {
+    return(data)
+  }
+  
+  for (i in inputLayer:outputLayer)
+  {
+    data <- cbind(data, rep(1, numRows))
+    input <- matMult(data, (1 - dropout[i + 1]) * layers[[i]][["weights"]])
+    
+    if (iterations > 0)
+    {
+      E <- as.vector(input)
+      V <- as.vector(dropout[i + 1] * (1 - dropout[i + 1]) *
+            (matMult(data ^ 2, layers[[i]][["weights"]] ^ 2)))
+      n <- length(E)
+      
+      ret <- matrix(rep(0, n), nrow = numRows)
+      
+      for (j in 1:iterations)
+      {
+        ret <- ret + layers[[i]][["unitFunction"]](matrix(rnorm(n, E, V),
+          nrow = numRows), darch = darch)[[1]]
+      }
+      
+      data <- ret/iterations
+    }
+    else
+    {
+      data <- layers[[i]][["unitFunction"]](input, net = darch)[[1]]
+    }
+  }
+  
+  data
 }
